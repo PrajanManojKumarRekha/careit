@@ -1,10 +1,20 @@
-from src.database.db_client import (
-    get_doctors,
-    get_prescriptions_for_patient,
-    get_user_by_email,
-    list_allowed_medications,
-    list_medication_policies,
-)
+try:
+    from src.database.db_client import (
+        get_doctors,
+        get_prescriptions_for_patient,
+        get_user_by_email,
+        list_allowed_medications,
+        list_medication_policies,
+    )
+except ModuleNotFoundError:
+    # Allows running as a script: python src/database/test_db.py
+    from db_client import (
+        get_doctors,
+        get_prescriptions_for_patient,
+        get_user_by_email,
+        list_allowed_medications,
+        list_medication_policies,
+    )
 
 
 def _assert_keys(payload: dict, required: set[str], label: str) -> None:
