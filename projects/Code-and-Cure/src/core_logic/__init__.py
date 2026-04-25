@@ -8,6 +8,7 @@ from .models import SlotResult
 from .models import SoapNote
 from .models import SpecialtyRecommendation
 from .models import SymptomInput
+from .soap_pdf import render_soap_note_pdf_bytes
 
 __all__ = [
     "FhirBundleResult",
@@ -18,4 +19,5 @@ __all__ = [
     "SoapNote",
     "SpecialtyRecommendation",
     "SymptomInput",
+    "render_soap_note_pdf_bytes",
 ]
