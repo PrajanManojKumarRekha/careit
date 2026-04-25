@@ -11,13 +11,17 @@ class AuthResponse(BaseModel):
     access_token: str
     role: str # 'patient' or 'doctor'
 
-# --- Symptom & Specialty Models ---
+# --- Symptom & Triage Models ---
 class SymptomRequest(BaseModel):
-    symptoms: str
+    symptoms: str                          # Free-text input (e.g., "I have a bad headache and blurry vision")
+    red_flag_context: Optional[str] = None # Escalation trigger (e.g., "patient reports chest tightness")
 
-class SpecialtyResponse(BaseModel):
-    specialty: str
-    confidence: float
+class TriageResponse(BaseModel):
+    recommended_specialty: str             # e.g., "Neurology"
+    department: str                        # e.g., "Navigation/Coordination"
+    rationale: str                         # e.g., "Headache symptoms suggest neurological evaluation"
+    extracted_symptom_cues: List[str]       # e.g., ["headache", "blurry vision"]
+    confidence: Optional[float] = None     # e.g., 0.92
 
 # --- Doctor & Appointment Models ---
 class Doctor(BaseModel):
