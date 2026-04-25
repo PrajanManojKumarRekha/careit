@@ -62,4 +62,38 @@ Activity logging for traceability
 Designed with awareness of regulations such as:
 HIPAA
 Setup Instructions - How to run your project locally.
+
+1) Environment variables
+- Copy `.env.example` to `.env`.
+- Fill in:
+  - `SUPABASE_URL`
+  - `SUPABASE_KEY`
+  - `JWT_SECRET`
+  - `GOOGLE_MAPS_KEY`
+  - `NEXT_PUBLIC_API_URL`
+
+2) Create database schema in Supabase
+- Open Supabase SQL Editor.
+- Run `src/database/schema.sql`.
+- This creates all project tables, indexes, and permissive RLS policies.
+
+3) Seed demo data
+- Run `src/database/seed.sql` in Supabase SQL Editor.
+- Seed includes:
+  - 3 doctor accounts and profiles (Dermatology, Cardiology, Neurology)
+  - 2 patient accounts
+  - 1 completed appointment
+  - 1 intake form
+  - 1 approved SOAP note
+  - 1 FHIR record
+
+4) Database client wrappers
+- Shared client and wrappers are in `src/database/db_client.py`.
+- Backend routes should call wrapper functions from this file (not direct SQL).
+
+5) Quick verification
+- Confirm you can read a doctor list and a user by email from Python:
+  - `get_doctors(None, None, None)`
+  - `get_user_by_email("patient.one@test.com")`
+
 Demo - Link to a demo video, live deployment, or screenshots.

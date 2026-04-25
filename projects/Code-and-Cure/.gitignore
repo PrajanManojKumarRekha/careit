@@ -2,3 +2,5 @@ AI.md
 context.md
 .cursorrules
 .env
+.env.local
+.env.*.local
