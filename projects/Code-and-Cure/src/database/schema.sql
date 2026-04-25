@@ -56,6 +56,12 @@ create table soap_notes (
   assessment text not null,
   plan text not null,
   raw_transcript text not null,
+  clinic_name text,
+  provider_display_name text,
+  provider_license_id text,
+  clinic_logo_url text,
+  soap_pdf_generated_at timestamptz,
+  document_reference_id text,
   approved boolean not null default false,
   approved_at timestamptz,
   created_at timestamptz not null default now()
@@ -88,6 +94,12 @@ create table prescriptions (
   requested_medication text not null,
   approval_status text not null default 'pending' check (approval_status in ('pending', 'approved', 'blocked')),
   block_reason text,
+  clinic_name text,
+  provider_display_name text,
+  provider_license_id text,
+  clinic_logo_url text,
+  prescription_pdf_generated_at timestamptz,
+  document_reference_id text,
   created_at timestamptz not null default now()
 );
 
@@ -110,6 +122,8 @@ create index idx_appointments_time on appointments(scheduled_at);
 create index idx_prescriptions_patient on prescriptions(patient_id);
 create index idx_prescriptions_appointment on prescriptions(appointment_id);
 create index idx_prescriptions_status on prescriptions(approval_status);
+create index idx_soap_notes_document_ref on soap_notes(document_reference_id);
+create index idx_prescriptions_document_ref on prescriptions(document_reference_id);
 create index idx_logs_user on logs(user_id);
 create index idx_logs_created on logs(created_at);
 
