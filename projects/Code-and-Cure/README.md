@@ -1,4 +1,5 @@
 Project Name - CureIT
+HEAD
 
 HEAD
 Team Members - Prajan Manoj Kumar Rekha (PrajanManojKumarRekha), Eric Cariaga (eCarCodes), Jessica C O'Bonna (jessic-o), Shayan Ali (CodewithShayan456)
@@ -41,6 +42,23 @@ Tech Stack -
 - Security/Compliance Approach: role-based route separation, mock auth for demo, HIPAA-aware handling principles, and controlled-substance prescription blocking
 
 CureIT is a lightweight, AI-assisted clinical documentation and scheduling platform designed specifically for small healthcare practices and independent practitioners. It streamlines patient management, enhances clinical note-taking, and improves overall workflow efficiency without requiring complex enterprise-level infrastructure.
+
+Team Members- Prajan Manoj Kumar Rekha (PrajanManojKumarRekha), Eric Cariaga (eCarCodes), Jessica C O'Bonna (jessic-o), Shayan Ali (CodewithShayan456)
+Problem Statement – What problem are you solving?
+
+Healthcare systems face operational challenges due to fragmented patient records, inefficient scheduling workflows, and inconsistent clinical documentation.
+
+Patient records are often stored across different Electronic Medical Record (EMR) systems, such as those provided by Oracle Health and Epic Systems, resulting in data silos.
+Patients frequently experience difficulty scheduling appointments with available or preferred doctors.
+Important medical details may be missed during consultations due to incomplete intake information.
+Manual documentation increases workload for healthcare providers and reduces consultation efficiency.
+
+These challenges reduce accessibility, continuity of care, and overall healthcare workflow efficiency.
+
+Solution – Describe your solution and how it works.
+
+This project introduces a web-based telehealth and medical documentation platform designed to streamline appointment scheduling, improve consultation workflows, and support standardized clinical record generation.
+refs/rewritten/origin-Shayan
 
 The system enables:
 
@@ -90,6 +108,7 @@ Activity logging for traceability
 
 Designed with awareness of regulations such as:
 HIPAA
+HEAD
 Setup Instructions - How to run your project locally.
 
 1) Environment variables
@@ -127,3 +146,37 @@ Setup Instructions - How to run your project locally.
 
 Demo - Link to a demo video, live deployment, or screenshots.
 refs/rewritten/origin-Eric-2
+
+Setup Instructions - How to run your project locally.
+
+### Backend Setup 🚀
+
+1. **Navigate to the Backend Folder**
+   ```bash
+   cd projects/Code-and-Cure
+   ```
+
+2. **Set Up Virtual Environment**
+   ```powershell
+   # Create the environment
+   python -m venv .venv
+
+   # Activate (Windows)
+   .\.venv\Scripts\activate
+
+   # Activate (Mac/Linux)
+   source .venv/bin/activate
+   ```
+
+3. **Install Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Run the Server**
+   ```bash
+   uvicorn main:app --reload
+   ```
+
+Demo - Link to a demo video, live deployment, or screenshots.
+refs/rewritten/origin-Shayan
