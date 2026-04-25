@@ -3,3 +3,5 @@ context.md
 .env
 questions.md
 biggerscope.md
+__pycache__/
+*.pyc
