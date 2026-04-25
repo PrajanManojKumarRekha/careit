@@ -1,47 +1,66 @@
-from fastapi import APIRouter, HTTPException
-from src.api.models import SymptomRequest, SpecialtyResponse
+from fastapi import APIRouter
+from src.api.models import SymptomRequest, TriageResponse
 
 router = APIRouter()
 
-# --- MOCK DATA ---
-# This mapping will be replaced by Person 3's core_logic function.
-# For now, we use a hardcoded dictionary so the Frontend team
-# can build the UI without waiting for the "Brain" to be ready.
-# (Contract-Driven Development per context.md Section 5)
-MOCK_SYMPTOM_MAP = {
-    "headache": {"specialty": "Neurology", "confidence": 0.92},
-    "chest pain": {"specialty": "Cardiology", "confidence": 0.95},
-    "skin rash": {"specialty": "Dermatology", "confidence": 0.88},
-    "back pain": {"specialty": "Orthopedics", "confidence": 0.85},
-    "anxiety": {"specialty": "Psychiatry", "confidence": 0.90},
-    "blurry vision": {"specialty": "Ophthalmology", "confidence": 0.87},
-    "toothache": {"specialty": "Dentistry", "confidence": 0.93},
-    "stomach ache": {"specialty": "Gastroenterology", "confidence": 0.89},
+# --- MOCK TRIAGE MAP ---
+# Person 3 will replace this with their core_logic triage function.
+# Each symptom maps to a full triage payload (not just a specialty).
+MOCK_TRIAGE_MAP = {
+    "headache":      {"specialty": "Neurology",         "department": "Navigation/Coordination", "confidence": 0.92},
+    "chest pain":    {"specialty": "Cardiology",        "department": "Navigation/Coordination", "confidence": 0.95},
+    "skin rash":     {"specialty": "Dermatology",       "department": "Navigation/Coordination", "confidence": 0.88},
+    "back pain":     {"specialty": "Orthopedics",       "department": "Navigation/Coordination", "confidence": 0.85},
+    "anxiety":       {"specialty": "Psychiatry",        "department": "Navigation/Coordination", "confidence": 0.90},
+    "blurry vision": {"specialty": "Ophthalmology",     "department": "Navigation/Coordination", "confidence": 0.87},
+    "toothache":     {"specialty": "Dentistry",         "department": "Navigation/Coordination", "confidence": 0.93},
+    "stomach ache":  {"specialty": "Gastroenterology",  "department": "Navigation/Coordination", "confidence": 0.89},
 }
 
-@router.post("/analyze", response_model=SpecialtyResponse)
+@router.post("/analyze", response_model=TriageResponse)
 async def analyze_symptoms(request: SymptomRequest):
     """
-    AI Care Navigator: Takes a patient's symptom description and
-    returns the recommended medical specialty.
+    AI Care Navigator: Accepts free-text symptom input and returns
+    a structured triage payload with specialty, department, and rationale.
 
     Currently uses mock data. Will be wired to:
-    from src.core_logic.symptom_mapper import map_symptoms
+    from src.core_logic.triage_engine import run_triage
     """
-    # Normalize input to lowercase for matching
-    symptom_key = request.symptoms.strip().lower()
+    # Normalize free-text input for keyword matching
+    symptom_text = request.symptoms.strip().lower()
 
-    # Look up the symptom in the mock map
-    result = MOCK_SYMPTOM_MAP.get(symptom_key)
+    # Extract symptom cues from the free-text
+    extracted_cues = [
+        keyword for keyword in MOCK_TRIAGE_MAP.keys()
+        if keyword in symptom_text
+    ]
 
-    if not result:
-        # Default fallback: route to General Practice
-        return SpecialtyResponse(
-            specialty="General Practice",
-            confidence=0.50
+    # Red-flag escalation check
+    if request.red_flag_context:
+        return TriageResponse(
+            recommended_specialty="Emergency Medicine",
+            department="Clinical/Signer",
+            rationale=f"Red flag detected: {request.red_flag_context}. Immediate escalation required.",
+            extracted_symptom_cues=extracted_cues or [symptom_text],
+            confidence=0.99
         )
 
-    return SpecialtyResponse(
-        specialty=result["specialty"],
-        confidence=result["confidence"]
+    # Match the first recognized symptom
+    for cue in extracted_cues:
+        result = MOCK_TRIAGE_MAP[cue]
+        return TriageResponse(
+            recommended_specialty=result["specialty"],
+            department=result["department"],
+            rationale=f"Symptom '{cue}' suggests {result['specialty']} evaluation",
+            extracted_symptom_cues=extracted_cues,
+            confidence=result["confidence"]
+        )
+
+    # Fallback: no recognized symptoms
+    return TriageResponse(
+        recommended_specialty="General Practice",
+        department="Navigation/Coordination",
+        rationale="No specific symptom matched. Routing to General Practice for initial assessment.",
+        extracted_symptom_cues=[symptom_text],
+        confidence=0.50
     )

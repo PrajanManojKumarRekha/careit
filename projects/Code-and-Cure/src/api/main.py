@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import routes (Will be enabled as we build them)
-from src.api.routes import auth, symptoms, doctors
-# from src.api.routes import appointments, soap, prescriptions, fhir
+from src.api.routes import auth, symptoms, doctors, appointments
+# from src.api.routes import soap, prescriptions, fhir
 
 app = FastAPI(
     title="CareIT Telehealth API",
@@ -36,6 +36,6 @@ async def root():
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(symptoms.router, prefix="/api/v1/intake", tags=["Symptom Analysis"])
 app.include_router(doctors.router, prefix="/api/v1/doctors", tags=["Discovery"])
-# app.include_router(appointments.router, prefix="/api/v1/appointments", tags=["Booking"])
+app.include_router(appointments.router, prefix="/api/v1/appointments", tags=["Booking"])
 # app.include_router(soap.router, prefix="/api/v1/soap", tags=["Clinical Documentation"])
 # app.include_router(prescriptions.router, prefix="/api/v1/prescriptions", tags=["Pharmacy"])
