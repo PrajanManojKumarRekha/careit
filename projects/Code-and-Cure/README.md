@@ -2,18 +2,16 @@ Project Name - CureIT
 Team Members- Prajan Manoj Kumar Rekha (PrajanManojKumarRekha), Eric Cariaga (eCarCodes), Jessica C O'Bonna (jessic-o), Shayan Ali (CodewithShayan456)
 Problem Statement – What problem are you solving?
 
-Healthcare systems face operational challenges due to fragmented patient records, inefficient scheduling workflows, and inconsistent clinical documentation.
+Healthcare providers, especially small clinics and independent practitioners, face increasing administrative overload do to inefficient documentation, fragmented scheduling tools, and inconsistent clinical note-taking workflows.
 
-Patient records are often stored across different Electronic Medical Record (EMR) systems, such as those provided by Oracle Health and Epic Systems, resulting in data silos.
-Patients frequently experience difficulty scheduling appointments with available or preferred doctors.
-Important medical details may be missed during consultations due to incomplete intake information.
-Manual documentation increases workload for healthcare providers and reduces consultation efficiency.
+Patient records are often scattered across multiple systems or stored in unstructured formats, making it difficult for providers to quickly access and interpret relevant medical history.
+Scheduling appointments is frequently handled through disconnected platforms, leading to inefficiencies and double-booking risks. Additionally, clinicians spend a significant portion of their time manually writing or refining clinical notes, reducing time available for patient care.
 
-These challenges reduce accessibility, continuity of care, and overall healthcare workflow efficiency.
+These challenges reduce workflow efficiency, increased cognitive load for providers, and inconsistent clinical documentation quality across patient visits.
 
 Solution – Describe your solution and how it works.
 
-This project introduces a web-based telehealth and medical documentation platform designed to streamline appointment scheduling, improve consultation workflows, and support standardized clinical record generation.
+CureIT is a lightweight, AI-assisted clinical documentation and scheduling platform designed specifically for small healthcare practices and independent practitioners. It streamlines patient management, enhances clinical note-taking, and improves overall workflow efficiency without requiring complex enterprise-level infrastructure.
 
 The system enables:
 
