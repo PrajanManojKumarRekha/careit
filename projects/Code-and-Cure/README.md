@@ -7,8 +7,8 @@ Access to timely care is often delayed when patients cannot instantly find avail
 
 Solution -
 CureIT is a prototype telehealth workflow platform focused on one clean end-to-end demo path:
-- Patient enters symptoms (example: headache).
-- System maps symptoms to a recommended specialty (example: Neurology) and can suggest nearby available doctors.
+- Patient enters a detailed free-text symptom description in the AI chatbox (for example headache, cold, rash, or mixed symptoms).
+- System performs pattern-based triage on symptom cues and recommends an appropriate specialty/department with rationale.
 - Patient can choose and book a preferred licensed practitioner from any area if that practitioner has availability.
 - If the preferred doctor is unavailable, the system can recommend the next available option.
 - Patient books a short 15-30 minute consultation slot for chat or video call.
@@ -16,6 +16,8 @@ CureIT is a prototype telehealth workflow platform focused on one clean end-to-e
 - Doctor can issue a compliant digital prescription from the consultation workflow (general/non-controlled medicines only).
 - Controlled substances are hard-blocked by policy in the virtual prescription path.
 - Consultation data is routed through internal systems for consent/compliance, clinical signer review, and care navigation coordination.
+- SOAP notes are rendered into PDF review artifacts for cross-system clinical/legal review.
+- Prescription artifacts can be generated as PDF with clinic/provider headstamp metadata (for example clinic name and licensed provider display details).
 - SOAP note and prescription data are converted into FHIR R4-style JSON bundle resources, including `Consent`, `Composition`, and `MedicationRequest`, for interoperable EMR export.
 
 This project is a workflow/documentation prototype and is not a diagnostic tool. It is designed for hackathon speed with clear team boundaries across frontend, API, core logic, and database layers, and it targets independent clinics and licensed practitioners rather than hospital system workflows.
@@ -23,7 +25,7 @@ This project is a workflow/documentation prototype and is not a diagnostic tool.
 Tech Stack -
 - Frontend: Next.js, React, TypeScript, Tailwind CSS
 - API Gateway: FastAPI, Pydantic
-- Core Logic: Pure Python 3.12, dataclasses, deterministic rule-based processing (care navigation mapping, SOAP parsing, compliance-safe FHIR bundling)
+- Core Logic: Pure Python 3.12, dataclasses, deterministic rule-based processing (free-text triage, SOAP parsing, in-memory PDF rendering, compliance-safe FHIR bundling)
 - Database: Supabase (PostgreSQL)
 - Data Standard: FHIR R4 JSON bundle (`Consent`, `Composition`, `MedicationRequest`)
 - Security/Compliance Approach: role-based route separation, mock auth for demo, HIPAA-aware handling principles, and controlled-substance prescription blocking
