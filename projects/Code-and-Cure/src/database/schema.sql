@@ -37,7 +37,8 @@ create table appointments (
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'completed', 'cancelled')),
   workflow_status text not null default 'coordination' check (workflow_status in ('legal', 'signer', 'coordination')),
   notes text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint uq_appointments_doctor_slot unique (doctor_id, scheduled_at)
 );
 
 create table intake_forms (

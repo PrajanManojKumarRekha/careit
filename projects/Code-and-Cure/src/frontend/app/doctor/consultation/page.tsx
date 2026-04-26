@@ -1,7 +1,7 @@
 "use client";
 
 import ProtectedRoute from "@/components/shared/ProtectedRoute";
-import { useState, useRef, Suspense, useCallback } from "react";
+import { useState, useRef, Suspense, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   api,
@@ -9,6 +9,7 @@ import {
   EMRHandoffResponse,
   EHRExportResponse,
   TranscribeUploadResponse,
+  Prescription,
 } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -16,19 +17,19 @@ import {
 // ---------------------------------------------------------------------------
 
 type Stage =
-  | "upload"        // waiting for file
-  | "transcribing"  // file uploaded, server is transcribing
-  | "review"        // transcript + SOAP draft ready; doctor edits
-  | "approved"      // SOAP approved
-  | "fhir_exported" // FHIR bundle generated
-  | "emr_submitted"; // EMR handoff complete
+  | "upload"
+  | "transcribing"
+  | "review"
+  | "approved"
+  | "fhir_exported"
+  | "emr_submitted";
 
 type InputMode = "video" | "manual";
 
 const QUALITY_BADGE: Record<string, { label: string; cls: string }> = {
-  minimal:   { label: "Incomplete – review carefully", cls: "bg-red-100 text-red-700" },
-  partial:   { label: "Partial – edit before approving",  cls: "bg-yellow-100 text-yellow-700" },
-  sufficient:{ label: "Ready to approve",               cls: "bg-green-100 text-green-700" },
+  minimal:    { label: "Incomplete – review carefully",   cls: "bg-error-container text-error" },
+  partial:    { label: "Partial – edit before approving", cls: "bg-secondary-fixed text-on-secondary-container" },
+  sufficient: { label: "Ready to approve",                cls: "bg-primary-fixed text-primary" },
 };
 
 const ACCEPTED_TYPES = ".mp4,.webm,.mov,.m4a,.mp3,.wav,.ogg";
@@ -40,40 +41,42 @@ const ACCEPTED_TYPES = ".mp4,.webm,.mov,.m4a,.mp3,.wav,.ogg";
 function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
   const router = useRouter();
 
-  // Stage and input mode
-  const [stage, setStage]       = useState<Stage>("upload");
+  const [stage, setStage]         = useState<Stage>("upload");
   const [inputMode, setInputMode] = useState<InputMode>("video");
 
-  // Upload / transcription
-  const [dragOver, setDragOver]       = useState(false);
+  const [dragOver, setDragOver]         = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [uploadError, setUploadError]   = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<TranscribeUploadResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Manual transcript fallback
-  const [manualText, setManualText]     = useState("");
-  const [generating, setGenerating]     = useState(false);
+  const [manualText, setManualText]       = useState("");
+  const [generating, setGenerating]       = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  // SOAP draft (shared between both input modes)
-  const [soapDraft, setSoapDraft]   = useState<SOAPDraftWithMeta | null>(null);
+  const [soapDraft, setSoapDraft] = useState<SOAPDraftWithMeta | null>(null);
   const [transcript, setTranscript] = useState("");
 
-  // Approve
-  const [approving, setApproving]     = useState(false);
+  const [approving, setApproving]       = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
 
-  // FHIR Export
-  const [exporting, setExporting]     = useState(false);
+  const [exporting, setExporting]       = useState(false);
   const [exportResult, setExportResult] = useState<EHRExportResponse | null>(null);
   const [exportError, setExportError]   = useState<string | null>(null);
 
-  // EMR Submit
-  const [submitting, setSubmitting] = useState(false);
-  const [emrResult, setEmrResult]   = useState<EMRHandoffResponse | null>(null);
+  const [submitting, setSubmitting]   = useState(false);
+  const [emrResult, setEmrResult]     = useState<EMRHandoffResponse | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [prescriptions, setPrescriptions]       = useState<Prescription[]>([]);
+  const [medicationInput, setMedicationInput]   = useState("");
+  const [prescribing, setPrescribing]           = useState(false);
+  const [prescriptionError, setPrescriptionError] = useState<string | null>(null);
+
+  const [docUploadFile, setDocUploadFile] = useState<File | null>(null);
+  const [docEmail, setDocEmail]           = useState("");
+  const [docActionMsg, setDocActionMsg]   = useState<string | null>(null);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -115,34 +118,19 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
     setGenerateError(null);
     setGenerating(true);
     try {
-      // Use the existing /generate endpoint which just parses transcript → SOAP
-      const res = await fetch("http://localhost:8000/api/v1/soap/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(localStorage.getItem("careit_access_token")
-            ? { Authorization: `Bearer ${localStorage.getItem("careit_access_token")}` }
-            : {}),
-        },
-        body: JSON.stringify({ appointment_id: appointmentId, transcript: manualText }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Generation failed");
-      }
-      const note = await res.json();
+      const note = await api.soap.generate(manualText);
       setSoapDraft({
         subjective: note.subjective,
-        objective: note.objective,
+        objective:  note.objective,
         assessment: note.assessment,
-        plan: note.plan,
+        plan:       note.plan,
         metadata: {
-          derived_from_transcript: true,
-          transcript_chars_processed: manualText.length,
-          update_timestamp: new Date().toISOString(),
-          chunk_index: 0,
-          quality_hint: note.assessment ? "sufficient" : note.subjective ? "partial" : "minimal",
-          change_summary: "Generated from manual transcript.",
+          derived_from_transcript:     true,
+          transcript_chars_processed:  manualText.length,
+          update_timestamp:            new Date().toISOString(),
+          chunk_index:                 0,
+          quality_hint:                note.assessment ? "sufficient" : note.subjective ? "partial" : "minimal",
+          change_summary:              "Generated from manual transcript.",
         },
       });
       setTranscript(manualText);
@@ -156,6 +144,7 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
   const approve = async () => {
     if (!soapDraft) return;
+    if (!window.confirm("Approve this SOAP note? This locks the note and cannot be undone.")) return;
     setApproveError(null);
     setApproving(true);
     try {
@@ -201,8 +190,52 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
     }
   };
 
+  useEffect(() => {
+    api.prescriptions
+      .list()
+      .then((rows) => setPrescriptions(rows.filter((p) => p.appointment_id === appointmentId)))
+      .catch(() => {});
+  }, [appointmentId]);
+
+  const createPrescription = async () => {
+    if (!medicationInput.trim()) return;
+    setPrescribing(true);
+    setPrescriptionError(null);
+    try {
+      const created = await api.prescriptions.create(appointmentId, medicationInput.trim());
+      setPrescriptions((prev) => [created, ...prev]);
+      setMedicationInput("");
+    } catch (e: unknown) {
+      setPrescriptionError(e instanceof Error ? e.message : "Failed to create prescription");
+    } finally {
+      setPrescribing(false);
+    }
+  };
+
+  const downloadSoapDoc = async () => {
+    const blob = await api.soap.downloadDocument(appointmentId);
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `soap-${appointmentId}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const reuploadSoapDoc = async () => {
+    if (!docUploadFile) return;
+    const res = await api.soap.reuploadDocument(appointmentId, docUploadFile);
+    setDocActionMsg(res.message);
+  };
+
+  const emailSoapDoc = async () => {
+    if (!docEmail.trim()) return;
+    const res = await api.soap.emailDocument(appointmentId, docEmail.trim());
+    setDocActionMsg(`${res.message} (${res.target_email})`);
+  };
+
   // ---------------------------------------------------------------------------
-  // Progress steps (only shown after review stage)
+  // Progress steps
   // ---------------------------------------------------------------------------
 
   const progressSteps = [
@@ -211,7 +244,7 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
     { key: "fhir_exported", label: "FHIR Exported" },
     { key: "emr_submitted", label: "EMR Submitted" },
   ];
-  const stageOrder = ["upload","transcribing","review","approved","fhir_exported","emr_submitted"];
+  const stageOrder = ["upload", "transcribing", "review", "approved", "fhir_exported", "emr_submitted"];
   const stageIdx   = stageOrder.indexOf(stage);
 
   // ---------------------------------------------------------------------------
@@ -223,19 +256,23 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
       {/* Header */}
       <div className="flex items-start gap-3 flex-wrap">
-        <button onClick={() => router.back()} className="text-indigo-600 text-sm hover:underline mt-1">
-          ← Dashboard
+        <button
+          onClick={() => router.back()}
+          className="flex items-center gap-1 text-primary text-label-md font-semibold hover:bg-white/40 px-3 py-1.5 rounded-xl transition-all"
+        >
+          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+          Dashboard
         </button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-xl font-bold text-gray-800">Clinical Documentation</h2>
-          <p className="text-xs text-gray-400 font-mono truncate">{appointmentId}</p>
+          <h2 className="text-headline-md text-on-surface font-bold">Clinical Documentation</h2>
+          <p className="text-caption text-outline font-mono truncate">{appointmentId}</p>
         </div>
         <StagePill stage={stage} />
       </div>
 
-      {/* Progress bar (visible after upload completes) */}
+      {/* Progress bar */}
       {stage !== "upload" && stage !== "transcribing" && (
-        <div className="flex items-center">
+        <div className="flex items-center glass-card rounded-2xl px-md py-sm shadow-sm">
           {progressSteps.map((step, i) => {
             const stepIdx = stageOrder.indexOf(step.key);
             const done    = stageIdx > stepIdx;
@@ -244,18 +281,20 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
               <div key={step.key} className="flex items-center flex-1">
                 <div className="flex flex-col items-center gap-1">
                   <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition ${
-                    done   ? "bg-indigo-600 text-white" :
-                    active ? "bg-indigo-200 text-indigo-800 ring-2 ring-indigo-400" :
-                             "bg-gray-100 text-gray-400"
+                    done   ? "bg-primary text-on-primary" :
+                    active ? "bg-primary-fixed text-primary ring-2 ring-primary" :
+                             "bg-surface-container-low text-outline"
                   }`}>
-                    {done ? "✓" : i + 1}
+                    {done
+                      ? <span className="material-symbols-outlined text-[14px]">check</span>
+                      : i + 1}
                   </div>
-                  <p className={`text-xs hidden sm:block whitespace-nowrap ${done || active ? "text-indigo-700 font-medium" : "text-gray-400"}`}>
+                  <p className={`text-caption hidden sm:block whitespace-nowrap ${done || active ? "text-primary font-semibold" : "text-outline"}`}>
                     {step.label}
                   </p>
                 </div>
                 {i < progressSteps.length - 1 && (
-                  <div className={`flex-1 h-0.5 mx-1 ${done ? "bg-indigo-600" : "bg-gray-200"}`} />
+                  <div className={`flex-1 h-0.5 mx-1 ${done ? "bg-primary" : "bg-outline-variant"}`} />
                 )}
               </div>
             );
@@ -265,28 +304,31 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
       {/* ── UPLOAD STAGE ── */}
       {(stage === "upload" || stage === "transcribing") && (
-        <div className="space-y-4">
+        <div className="space-y-md">
 
           {/* Mode toggle */}
-          <div className="flex rounded-xl border border-gray-200 overflow-hidden w-fit">
+          <div className="flex rounded-xl border border-outline-variant overflow-hidden w-fit">
             {(["video", "manual"] as InputMode[]).map((m) => (
               <button
                 key={m}
                 onClick={() => { setInputMode(m); setUploadError(null); setGenerateError(null); }}
-                className={`px-5 py-2 text-sm font-medium transition ${
+                className={`px-5 py-2.5 text-label-md font-semibold transition flex items-center gap-2 ${
                   inputMode === m
-                    ? "bg-indigo-600 text-white"
-                    : "bg-white text-gray-500 hover:bg-gray-50"
+                    ? "bg-primary text-on-primary"
+                    : "bg-white text-on-surface-variant hover:bg-surface-container-low"
                 }`}
               >
-                {m === "video" ? "📹 Upload Recording" : "✏️ Paste Transcript"}
+                <span className="material-symbols-outlined text-[16px]">
+                  {m === "video" ? "videocam" : "edit_note"}
+                </span>
+                {m === "video" ? "Upload Recording" : "Paste Transcript"}
               </button>
             ))}
           </div>
 
           {/* Video upload panel */}
           {inputMode === "video" && (
-            <div className="space-y-4">
+            <div className="space-y-md">
               {stage !== "transcribing" ? (
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -295,8 +337,8 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
                   onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition ${
                     dragOver
-                      ? "border-indigo-500 bg-indigo-50"
-                      : "border-gray-300 hover:border-indigo-400 hover:bg-gray-50"
+                      ? "border-primary bg-primary-fixed/30"
+                      : "border-outline-variant hover:border-primary hover:bg-surface-container-low"
                   }`}
                 >
                   <input
@@ -306,14 +348,19 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
                     className="hidden"
                     onChange={handleFileChange}
                   />
-                  <p className="text-5xl mb-4">🎬</p>
-                  <p className="text-lg font-semibold text-gray-700">
+                  <span
+                    className="material-symbols-outlined text-primary mb-md block"
+                    style={{ fontSize: "56px", fontVariationSettings: "'FILL' 1" }}
+                  >
+                    videocam
+                  </span>
+                  <p className="text-headline-md text-on-surface font-bold mb-xs">
                     Drop your consultation recording here
                   </p>
-                  <p className="text-sm text-gray-400 mt-2">
+                  <p className="text-body-md text-on-surface-variant">
                     or click to browse — MP4, WebM, MOV, M4A, MP3, WAV
                   </p>
-                  <p className="text-xs text-gray-300 mt-3">
+                  <p className="text-caption text-outline mt-sm">
                     Recorded with Zoom, Google Meet, or MS Teams? Download and upload the recording here.
                     <br />Max 25 MB · For longer sessions, export a 5–10 min audio clip.
                   </p>
@@ -323,13 +370,12 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
               )}
 
               {uploadError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-                  <p className="text-red-600 text-sm font-medium">Upload failed</p>
-                  <p className="text-red-500 text-xs mt-1">{uploadError}</p>
+                <div className="bg-error-container border border-error/20 rounded-xl px-md py-sm">
+                  <p className="text-error text-label-md font-semibold">Upload failed</p>
+                  <p className="text-error/80 text-caption mt-xs">{uploadError}</p>
                   {uploadError.includes("TRANSCRIPTION_PROVIDER_UNAVAILABLE") && (
-                    <p className="text-amber-600 text-xs mt-2 font-medium">
-                      💡 Set OPENAI_API_KEY in your .env to enable Whisper API transcription,
-                      or switch to "Paste Transcript" mode.
+                    <p className="text-tertiary text-caption mt-xs font-semibold">
+                      Set OPENAI_API_KEY in your .env to enable Whisper API transcription, or switch to "Paste Transcript" mode.
                     </p>
                   )}
                 </div>
@@ -339,28 +385,28 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
           {/* Manual transcript panel */}
           {inputMode === "manual" && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-3">
-              <h3 className="font-semibold text-gray-700">Paste consultation transcript</h3>
-              <p className="text-xs text-gray-400">
+            <div className="glass-card rounded-2xl p-md shadow-sm space-y-md">
+              <h3 className="text-label-md text-on-surface font-semibold">Paste consultation transcript</h3>
+              <p className="text-caption text-outline">
                 For best SOAP parsing, include section headers like
-                <span className="font-mono bg-gray-100 px-1 rounded mx-1">Subjective:</span>
-                <span className="font-mono bg-gray-100 px-1 rounded mx-1">Objective:</span>
-                <span className="font-mono bg-gray-100 px-1 rounded mx-1">Assessment:</span>
-                <span className="font-mono bg-gray-100 px-1 rounded">Plan:</span>
+                <span className="font-mono bg-surface-container-low px-1 rounded mx-1">Subjective:</span>
+                <span className="font-mono bg-surface-container-low px-1 rounded mx-1">Objective:</span>
+                <span className="font-mono bg-surface-container-low px-1 rounded mx-1">Assessment:</span>
+                <span className="font-mono bg-surface-container-low px-1 rounded">Plan:</span>
               </p>
               <textarea
                 value={manualText}
                 onChange={(e) => setManualText(e.target.value)}
                 placeholder="Paste the full consultation transcript here…"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none min-h-[180px] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="w-full border border-outline-variant rounded-xl px-md py-sm text-body-md resize-none min-h-[180px] focus:outline-none focus:ring-2 focus:ring-primary bg-white"
               />
               {generateError && (
-                <p className="text-red-500 text-xs">{generateError}</p>
+                <p className="text-error text-caption">{generateError}</p>
               )}
               <button
                 onClick={generateFromManual}
                 disabled={generating || !manualText.trim()}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl py-3 transition disabled:opacity-40"
+                className="w-full bg-primary text-on-primary font-bold rounded-xl py-3 text-label-md transition hover:scale-[1.01] active:scale-[0.99] shadow-md disabled:opacity-40"
               >
                 {generating ? "Generating SOAP…" : "Generate SOAP from Transcript"}
               </button>
@@ -374,23 +420,26 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Left panel — actions */}
-          <div className="space-y-4">
+          <div className="space-y-md">
 
-            {/* File / transcription info */}
+            {/* Transcription info */}
             {uploadResult && (
-              <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm space-y-1">
-                <p className="font-semibold text-green-700">✅ Transcription complete</p>
-                <div className="text-xs text-green-600 space-y-0.5">
-                  <p>File: <span className="font-medium">{uploadResult.file_info.filename}</span> ({uploadResult.file_info.size_mb} MB)</p>
-                  <p>Provider: <span className="font-medium">{uploadResult.transcription_provider.replace(/_/g, " ")}</span></p>
+              <div className="bg-primary-fixed/40 border border-primary/20 rounded-xl px-md py-sm space-y-xs">
+                <div className="flex items-center gap-xs">
+                  <span className="material-symbols-outlined text-primary text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <p className="text-label-md text-primary font-semibold">Transcription complete</p>
+                </div>
+                <div className="text-caption text-on-surface-variant space-y-0.5">
+                  <p>File: <span className="font-semibold text-on-surface">{uploadResult.file_info.filename}</span> ({uploadResult.file_info.size_mb} MB)</p>
+                  <p>Provider: <span className="font-semibold text-on-surface">{uploadResult.transcription_provider.replace(/_/g, " ")}</span></p>
                   {uploadResult.duration_seconds && (
-                    <p>Duration: <span className="font-medium">{Math.round(uploadResult.duration_seconds)}s</span></p>
+                    <p>Duration: <span className="font-semibold text-on-surface">{Math.round(uploadResult.duration_seconds)}s</span></p>
                   )}
-                  <p>Language: <span className="font-medium">{uploadResult.language_detected}</span></p>
+                  <p>Language: <span className="font-semibold text-on-surface">{uploadResult.language_detected}</span></p>
                 </div>
                 {uploadResult.warning && (
-                  <p className="text-amber-600 text-xs mt-2 border-t border-amber-200 pt-2">
-                    ⚠️ {uploadResult.warning}
+                  <p className="text-tertiary text-caption border-t border-outline-variant/30 pt-xs">
+                    {uploadResult.warning}
                   </p>
                 )}
               </div>
@@ -398,100 +447,172 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
             {/* Transcript (collapsible) */}
             {transcript && (
-              <details className="bg-white rounded-xl border border-gray-200 shadow-sm">
-                <summary className="px-4 py-3 cursor-pointer text-sm font-semibold text-gray-700 select-none">
+              <details className="glass-card rounded-xl border border-white/20">
+                <summary className="px-md py-sm cursor-pointer text-label-md font-semibold text-on-surface select-none">
                   Full transcript ({transcript.length} chars)
                 </summary>
-                <div className="px-4 pb-4 max-h-48 overflow-y-auto text-xs text-gray-600 leading-relaxed border-t border-gray-100 pt-3">
+                <div className="px-md pb-md max-h-48 overflow-y-auto text-caption text-on-surface-variant leading-relaxed border-t border-outline-variant/30 pt-sm">
                   {transcript}
                 </div>
               </details>
             )}
 
             {/* Approve */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-700 mb-2">SOAP Approval Gate</h3>
+            <div className="glass-card rounded-xl p-md shadow-sm">
+              <h3 className="text-label-md text-on-surface font-semibold mb-sm">SOAP Approval Gate</h3>
               {stage === "review" ? (
                 <>
-                  <p className="text-xs text-gray-500 mb-3">
+                  <p className="text-caption text-outline mb-sm">
                     Review the SOAP sections on the right. Edit any section directly before approving.
                     Approval locks the note and unlocks FHIR export.
                   </p>
                   <button
                     onClick={approve}
                     disabled={approving || !soapDraft}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg py-2.5 transition disabled:opacity-40"
+                    className="w-full bg-primary text-on-primary font-bold rounded-xl py-3 text-label-md transition hover:scale-[1.01] active:scale-[0.99] shadow-sm disabled:opacity-40"
                   >
                     {approving ? "Approving…" : "Approve SOAP Note"}
                   </button>
-                  {approveError && <p className="text-red-500 text-xs mt-2">{approveError}</p>}
+                  {approveError && <p className="text-error text-caption mt-xs">{approveError}</p>}
                 </>
               ) : (
-                <div className="flex items-center gap-2 text-green-600">
-                  <span className="text-lg">✅</span>
-                  <span className="text-sm font-medium">SOAP note approved</span>
+                <div className="flex items-center gap-xs text-primary">
+                  <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <span className="text-label-md font-semibold">SOAP note approved</span>
                 </div>
               )}
             </div>
 
             {/* FHIR Export */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-700 mb-2">FHIR R4 Export</h3>
+            <div className="glass-card rounded-xl p-md shadow-sm">
+              <h3 className="text-label-md text-on-surface font-semibold mb-sm">FHIR R4 Export</h3>
               {stage === "approved" ? (
                 <>
-                  <p className="text-xs text-gray-500 mb-3">
+                  <p className="text-caption text-outline mb-sm">
                     Packages the approved SOAP note into an interoperable FHIR R4 Bundle
                     (Consent + Composition + optional MedicationRequest).
                   </p>
                   <button
                     onClick={exportFhir}
                     disabled={exporting}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg py-2.5 transition disabled:opacity-40"
+                    className="w-full bg-secondary text-on-secondary font-bold rounded-xl py-3 text-label-md transition hover:scale-[1.01] active:scale-[0.99] shadow-sm disabled:opacity-40"
                   >
                     {exporting ? "Generating bundle…" : "Export FHIR R4 Bundle"}
                   </button>
-                  {exportError && <p className="text-red-500 text-xs mt-2">{exportError}</p>}
+                  {exportError && <p className="text-error text-caption mt-xs">{exportError}</p>}
                 </>
               ) : stage === "fhir_exported" || stage === "emr_submitted" ? (
                 <FhirSummary result={exportResult} />
               ) : (
-                <p className="text-xs text-gray-400">Approve SOAP note to unlock.</p>
+                <p className="text-caption text-outline">Approve SOAP note to unlock.</p>
               )}
             </div>
 
             {/* EMR Submit */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-700 mb-2">EMR Handoff</h3>
+            <div className="glass-card rounded-xl p-md shadow-sm">
+              <h3 className="text-label-md text-on-surface font-semibold mb-sm">EMR Handoff</h3>
               {stage === "fhir_exported" ? (
                 <>
-                  <p className="text-xs text-gray-500 mb-3">
+                  <p className="text-caption text-outline mb-sm">
                     Submits the FHIR bundle to the simulated Athenahealth endpoint and
                     returns a traceable ACK with status history.
                   </p>
                   <button
                     onClick={submitEmr}
                     disabled={submitting}
-                    className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg py-2.5 transition disabled:opacity-40"
+                    className="w-full bg-tertiary text-on-tertiary font-bold rounded-xl py-3 text-label-md transition hover:scale-[1.01] active:scale-[0.99] shadow-sm disabled:opacity-40"
                   >
                     {submitting ? "Submitting…" : "Submit to EMR (Athenahealth-sim)"}
                   </button>
-                  {submitError && <p className="text-red-500 text-xs mt-2">{submitError}</p>}
+                  {submitError && <p className="text-error text-caption mt-xs">{submitError}</p>}
                 </>
               ) : stage === "emr_submitted" && emrResult ? (
                 <EMRTimeline result={emrResult} />
               ) : (
-                <p className="text-xs text-gray-400">Export FHIR bundle first.</p>
+                <p className="text-caption text-outline">Export FHIR bundle first.</p>
               )}
+            </div>
+
+            {/* Document Transfer */}
+            <div className="glass-card rounded-xl p-md shadow-sm space-y-sm">
+              <h3 className="text-label-md text-on-surface font-semibold">SOAP Document Transfer</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
+                <button
+                  onClick={downloadSoapDoc}
+                  className="border border-outline-variant rounded-xl px-sm py-2 text-label-md text-on-surface hover:bg-surface-container-low transition"
+                >
+                  Download PDF
+                </button>
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.doc,.docx"
+                  onChange={(e) => setDocUploadFile(e.target.files?.[0] || null)}
+                  className="text-caption text-on-surface-variant"
+                />
+                <button
+                  onClick={reuploadSoapDoc}
+                  disabled={!docUploadFile}
+                  className="bg-primary text-on-primary rounded-xl px-sm py-2 text-label-md font-semibold disabled:opacity-40 transition"
+                >
+                  Reupload
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={docEmail}
+                  onChange={(e) => setDocEmail(e.target.value)}
+                  placeholder="next-system@clinic.com"
+                  className="flex-1 border border-outline-variant rounded-xl px-sm py-2 text-body-md focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                />
+                <button
+                  onClick={emailSoapDoc}
+                  className="bg-secondary text-on-secondary rounded-xl px-sm py-2 text-label-md font-semibold transition"
+                >
+                  Email
+                </button>
+              </div>
+              {docActionMsg && <p className="text-caption text-primary font-semibold">{docActionMsg}</p>}
+            </div>
+
+            {/* Prescription */}
+            <div className="glass-card rounded-xl p-md shadow-sm space-y-sm">
+              <h3 className="text-label-md text-on-surface font-semibold">Prescription</h3>
+              <div className="flex gap-2">
+                <input
+                  value={medicationInput}
+                  onChange={(e) => setMedicationInput(e.target.value)}
+                  placeholder="Medication name"
+                  className="flex-1 border border-outline-variant rounded-xl px-sm py-2 text-body-md focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                />
+                <button
+                  onClick={createPrescription}
+                  disabled={prescribing || !medicationInput.trim()}
+                  className="bg-primary text-on-primary rounded-xl px-sm py-2 text-label-md font-semibold disabled:opacity-40 transition"
+                >
+                  Add
+                </button>
+              </div>
+              {prescriptionError && <p className="text-caption text-error">{prescriptionError}</p>}
+              <div className="space-y-2 max-h-36 overflow-y-auto">
+                {prescriptions.map((p) => (
+                  <div key={p.id} className="text-caption border border-outline-variant/30 rounded-xl px-sm py-xs bg-surface-container-low">
+                    <span className="font-semibold text-on-surface">{p.requested_medication}</span>
+                    <span className="text-outline"> · {p.approval_status}</span>
+                    {p.block_reason ? <span className="text-error"> ({p.block_reason})</span> : null}
+                  </div>
+                ))}
+                {prescriptions.length === 0 && <p className="text-caption text-outline">No prescriptions yet.</p>}
+              </div>
             </div>
           </div>
 
           {/* Right panel — SOAP draft */}
           <div>
-            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm sticky top-4">
-              <div className="flex items-start justify-between mb-2 gap-2">
-                <h3 className="font-semibold text-gray-700">SOAP Note</h3>
+            <div className="glass-card rounded-2xl p-md shadow-sm sticky top-24">
+              <div className="flex items-start justify-between mb-sm gap-2">
+                <h3 className="text-label-md text-on-surface font-semibold">SOAP Note</h3>
                 {soapDraft && (
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${
+                  <span className={`text-caption font-bold px-3 py-0.5 rounded-full whitespace-nowrap ${
                     QUALITY_BADGE[soapDraft.metadata.quality_hint]?.cls || ""
                   }`}>
                     {QUALITY_BADGE[soapDraft.metadata.quality_hint]?.label}
@@ -500,17 +621,17 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
               </div>
 
               {soapDraft?.metadata.change_summary && (
-                <p className="text-xs text-gray-400 italic mb-3">{soapDraft.metadata.change_summary}</p>
+                <p className="text-caption text-outline italic mb-sm">{soapDraft.metadata.change_summary}</p>
               )}
 
               {!soapDraft ? (
-                <div className="text-center py-10 text-gray-300">
-                  <p className="text-4xl mb-2">📝</p>
-                  <p className="text-sm">SOAP draft will appear here after transcription.</p>
+                <div className="text-center py-10">
+                  <span className="material-symbols-outlined text-outline text-5xl mb-xs block">description</span>
+                  <p className="text-body-md text-outline">SOAP draft will appear here after transcription.</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {(["subjective","objective","assessment","plan"] as const).map((field) => (
+                <div className="space-y-sm">
+                  {(["subjective", "objective", "assessment", "plan"] as const).map((field) => (
                     <SOAPField
                       key={field}
                       field={field}
@@ -523,11 +644,9 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
               )}
 
               {soapDraft && (
-                <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-xs text-gray-400">
+                <div className="mt-sm pt-sm border-t border-outline-variant/30 flex justify-between text-caption text-outline">
                   <span>{soapDraft.metadata.transcript_chars_processed} chars processed</span>
-                  <span>
-                    {stage === "review" ? "Editable" : "Locked"}
-                  </span>
+                  <span>{stage === "review" ? "Editable" : "Locked"}</span>
                 </div>
               )}
             </div>
@@ -543,10 +662,10 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 // ---------------------------------------------------------------------------
 
 const SOAP_FIELD_STYLE: Record<string, { border: string; label: string; labelCls: string }> = {
-  subjective: { border: "border-indigo-200 bg-indigo-50", label: "S — Subjective", labelCls: "text-indigo-700" },
-  objective:  { border: "border-blue-200 bg-blue-50",     label: "O — Objective",  labelCls: "text-blue-700"   },
-  assessment: { border: "border-violet-200 bg-violet-50", label: "A — Assessment", labelCls: "text-violet-700" },
-  plan:       { border: "border-purple-200 bg-purple-50", label: "P — Plan",       labelCls: "text-purple-700" },
+  subjective: { border: "border-primary/20 bg-primary-fixed/40",     label: "S — Subjective", labelCls: "text-primary"              },
+  objective:  { border: "border-secondary/20 bg-secondary-fixed/40", label: "O — Objective",  labelCls: "text-secondary"            },
+  assessment: { border: "border-tertiary/20 bg-tertiary-fixed/40",   label: "A — Assessment", labelCls: "text-on-tertiary-container" },
+  plan:       { border: "border-outline-variant bg-surface-container-low", label: "P — Plan", labelCls: "text-on-surface-variant"   },
 };
 
 function SOAPField({
@@ -559,18 +678,18 @@ function SOAPField({
 }) {
   const { border, label, labelCls } = SOAP_FIELD_STYLE[field];
   return (
-    <div className={`rounded-lg border p-3 ${border}`}>
-      <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${labelCls}`}>{label}</p>
+    <div className={`rounded-xl border p-sm ${border}`}>
+      <p className={`text-caption font-bold uppercase tracking-wide mb-xs ${labelCls}`}>{label}</p>
       {readonly ? (
-        <p className="text-gray-700 text-sm leading-relaxed min-h-[1.5rem]">
-          {value || <span className="italic text-gray-300">—</span>}
+        <p className="text-on-surface text-body-md leading-relaxed min-h-[1.5rem]">
+          {value || <span className="italic text-outline">—</span>}
         </p>
       ) : (
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Edit before approving…"
-          className="w-full bg-transparent text-gray-700 text-sm leading-relaxed resize-none focus:outline-none min-h-[56px]"
+          className="w-full bg-transparent text-on-surface text-body-md leading-relaxed resize-none focus:outline-none min-h-[56px]"
         />
       )}
     </div>
@@ -579,26 +698,26 @@ function SOAPField({
 
 function StagePill({ stage }: { stage: Stage }) {
   const config: Record<Stage, { label: string; cls: string }> = {
-    upload:        { label: "Waiting for upload",  cls: "bg-gray-100 text-gray-500"            },
-    transcribing:  { label: "Transcribing…",        cls: "bg-blue-100 text-blue-700 animate-pulse" },
-    review:        { label: "Review draft",         cls: "bg-yellow-100 text-yellow-700"         },
-    approved:      { label: "SOAP Approved",        cls: "bg-green-100 text-green-700"           },
-    fhir_exported: { label: "FHIR Ready",           cls: "bg-blue-100 text-blue-700"             },
-    emr_submitted: { label: "EMR Submitted",        cls: "bg-purple-100 text-purple-700"         },
+    upload:        { label: "Waiting for upload", cls: "bg-surface-container text-outline" },
+    transcribing:  { label: "Transcribing…",       cls: "bg-secondary-fixed text-secondary animate-pulse" },
+    review:        { label: "Review draft",        cls: "bg-secondary-fixed text-on-secondary-container" },
+    approved:      { label: "SOAP Approved",       cls: "bg-primary-fixed text-primary" },
+    fhir_exported: { label: "FHIR Ready",          cls: "bg-secondary-fixed text-secondary" },
+    emr_submitted: { label: "EMR Submitted",       cls: "bg-primary-fixed text-primary" },
   };
   const { label, cls } = config[stage];
-  return <span className={`text-xs font-semibold px-3 py-1 rounded-full ${cls}`}>{label}</span>;
+  return <span className={`text-caption font-bold px-3 py-1 rounded-full capitalize ${cls}`}>{label}</span>;
 }
 
 function TranscribingSpinner({ filename }: { filename?: string }) {
   return (
-    <div className="border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-12 text-center">
-      <div className="inline-block w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
-      <p className="text-lg font-semibold text-indigo-700">Transcribing…</p>
+    <div className="border-2 border-dashed border-primary/30 bg-primary-fixed/20 rounded-2xl p-12 text-center">
+      <div className="inline-block w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-md" />
+      <p className="text-headline-md text-primary font-bold">Transcribing…</p>
       {filename && (
-        <p className="text-sm text-indigo-500 mt-1 font-mono truncate max-w-xs mx-auto">{filename}</p>
+        <p className="text-caption text-on-surface-variant mt-xs font-mono truncate max-w-xs mx-auto">{filename}</p>
       )}
-      <p className="text-xs text-indigo-400 mt-3">
+      <p className="text-caption text-outline mt-sm">
         This usually takes 20–60 seconds depending on the recording length.
         <br />Do not close this tab.
       </p>
@@ -609,17 +728,17 @@ function TranscribingSpinner({ filename }: { filename?: string }) {
 function FhirSummary({ result }: { result: EHRExportResponse | null }) {
   if (!result) return null;
   const entries = (result.fhir_bundle as { entry?: Array<{ resource?: { resourceType?: string } }> }).entry || [];
-  const types = entries.map((e) => e.resource?.resourceType).filter(Boolean).join(", ");
+  const types   = entries.map((e) => e.resource?.resourceType).filter(Boolean).join(", ");
   return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-blue-600 mb-2">
-        <span className="text-lg">📦</span>
-        <span className="text-sm font-medium">FHIR R4 Bundle Ready</span>
+    <div className="space-y-xs">
+      <div className="flex items-center gap-xs text-secondary mb-xs">
+        <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>inventory_2</span>
+        <span className="text-label-md font-semibold">FHIR R4 Bundle Ready</span>
       </div>
-      <div className="text-xs text-gray-500 space-y-0.5">
-        <p>Export ID: <span className="font-mono">{result.export_id.slice(0, 16)}…</span></p>
-        <p>Resources: <span className="font-medium text-gray-700">{types || "Bundle"}</span></p>
-        <p>Status: <span className="text-green-600 font-medium">{result.status}</span></p>
+      <div className="text-caption text-on-surface-variant space-y-0.5">
+        <p>Export ID: <span className="font-mono text-on-surface">{result.export_id.slice(0, 16)}…</span></p>
+        <p>Resources: <span className="font-semibold text-on-surface">{types || "Bundle"}</span></p>
+        <p>Status: <span className="text-primary font-semibold">{result.status}</span></p>
       </div>
     </div>
   );
@@ -631,16 +750,16 @@ function EMRTimeline({ result }: { result: EMRHandoffResponse }) {
     transaction_id?: string; fhir_version?: string;
   };
   const steps = [
-    { label: "Prepared",                  at: result.submitted_at },
-    { label: "Sent to Athenahealth-sim",  at: result.submitted_at },
-    { label: "Acknowledged",              at: result.acknowledged_at || result.submitted_at },
+    { label: "Prepared",                 at: result.submitted_at },
+    { label: "Sent to Athenahealth-sim", at: result.submitted_at },
+    { label: "Acknowledged",             at: result.acknowledged_at || result.submitted_at },
   ];
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-purple-600 mb-2">
-        <span className="text-lg">🏥</span>
-        <span className="text-sm font-medium">EMR Handoff Complete</span>
-        <span className="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+    <div className="space-y-sm">
+      <div className="flex items-center gap-xs text-primary mb-xs">
+        <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>local_hospital</span>
+        <span className="text-label-md font-semibold">EMR Handoff Complete</span>
+        <span className="ml-auto text-caption bg-primary-fixed text-primary px-2 py-0.5 rounded-full font-bold">
           {result.status}
         </span>
       </div>
@@ -648,33 +767,33 @@ function EMRTimeline({ result }: { result: EMRHandoffResponse }) {
         {steps.map((s, i) => (
           <div key={i} className="flex items-start gap-2">
             <div className="flex flex-col items-center">
-              <div className="w-4 h-4 rounded-full bg-purple-600 flex items-center justify-center">
-                <span className="text-white text-xs">✓</span>
+              <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                <span className="material-symbols-outlined text-on-primary" style={{ fontSize: "10px" }}>check</span>
               </div>
-              {i < steps.length - 1 && <div className="w-0.5 h-4 bg-purple-200 mt-1" />}
+              {i < steps.length - 1 && <div className="w-0.5 h-4 bg-primary-fixed mt-1" />}
             </div>
             <div>
-              <p className="text-xs font-medium text-gray-700">{s.label}</p>
-              <p className="text-xs text-gray-400">{new Date(s.at).toLocaleTimeString()}</p>
+              <p className="text-caption font-semibold text-on-surface">{s.label}</p>
+              <p className="text-caption text-outline">{new Date(s.at).toLocaleTimeString()}</p>
             </div>
           </div>
         ))}
       </div>
-      <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
+      <div className="bg-surface-container-low rounded-xl p-sm space-y-xs text-caption">
         {([
           ["Submission ID", result.submission_id.slice(0, 16) + "…", true],
-          ["Transaction",   sim.transaction_id || "",               true],
-          ["ACK Code",      sim.ack_code || "AA",                  false],
-          ["FHIR Version",  sim.fhir_version || "R4",              false],
-          ["Payload Hash",  result.payload_hash,                   true],
+          ["Transaction",   sim.transaction_id || "",                true],
+          ["ACK Code",      sim.ack_code || "AA",                   false],
+          ["FHIR Version",  sim.fhir_version || "R4",               false],
+          ["Payload Hash",  result.payload_hash,                    true],
         ] as [string, string, boolean][]).map(([k, v, mono]) => (
           <div key={k} className="flex justify-between">
-            <span className="text-gray-400">{k}</span>
-            <span className={`text-gray-700 ${mono ? "font-mono" : ""}`}>{v}</span>
+            <span className="text-outline">{k}</span>
+            <span className={`text-on-surface ${mono ? "font-mono" : ""}`}>{v}</span>
           </div>
         ))}
       </div>
-      {sim.message && <p className="text-xs text-gray-500 italic">{sim.message}</p>}
+      {sim.message && <p className="text-caption text-on-surface-variant italic">{sim.message}</p>}
     </div>
   );
 }
@@ -684,16 +803,20 @@ function EMRTimeline({ result }: { result: EMRHandoffResponse }) {
 // ---------------------------------------------------------------------------
 
 function ConsultationPageInner() {
-  const params = useSearchParams();
+  const params       = useSearchParams();
   const appointmentId = params.get("appointment_id") || "";
 
   if (!appointmentId) {
     return (
-      <div className="max-w-lg mx-auto mt-16 text-center text-gray-500 px-4">
-        <p className="text-4xl mb-4">⚠️</p>
-        <p className="font-medium mb-2">No appointment selected.</p>
-        <a href="/doctor/dashboard" className="text-indigo-600 text-sm hover:underline">
-          ← Go to Dashboard
+      <div className="max-w-lg mx-auto mt-16 text-center px-4">
+        <span className="material-symbols-outlined text-outline text-5xl mb-md block">warning</span>
+        <p className="text-headline-md text-on-surface font-bold mb-xs">No appointment selected.</p>
+        <a
+          href="/doctor/dashboard"
+          className="text-primary text-label-md font-semibold hover:underline inline-flex items-center gap-1"
+        >
+          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+          Go to Dashboard
         </a>
       </div>
     );
@@ -705,14 +828,26 @@ function ConsultationPageInner() {
 export default function ConsultationPage() {
   return (
     <ProtectedRoute role="doctor">
-      <div className="min-h-screen bg-gray-50">
-        <nav className="bg-white border-b px-6 py-4">
-          <h1 className="text-lg font-bold text-indigo-700">CareIT — Clinical Documentation</h1>
-          <p className="text-xs text-gray-400">Upload recording → Auto-transcribe → SOAP → FHIR R4 → EMR</p>
-        </nav>
-        <Suspense fallback={<div className="p-8 text-gray-500">Loading…</div>}>
-          <ConsultationPageInner />
-        </Suspense>
+      <div className="min-h-screen bg-background">
+        <div className="fixed inset-0 hero-gradient z-0 pointer-events-none" />
+
+        <header className="fixed top-0 left-0 right-0 z-50 flex items-center gap-4 px-6 py-3 glass-panel border-b border-white/20 shadow-[0_4px_24px_rgba(0,77,64,0.08)]">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>health_and_safety</span>
+            <h1 className="font-black text-primary">careIT</h1>
+          </div>
+          <div className="h-5 w-px bg-outline-variant" />
+          <span className="text-caption text-outline font-semibold uppercase tracking-wider">Clinical Documentation</span>
+          <div className="ml-auto hidden md:block">
+            <p className="text-caption text-outline">Upload → Transcribe → SOAP → FHIR R4 → EMR</p>
+          </div>
+        </header>
+
+        <main className="relative z-10 pt-20 pb-xl">
+          <Suspense fallback={<div className="p-8 text-outline text-body-md">Loading…</div>}>
+            <ConsultationPageInner />
+          </Suspense>
+        </main>
       </div>
     </ProtectedRoute>
   );

@@ -95,16 +95,40 @@ def insert_doctor_profile(
     return _first_or_none(res.data) or {}
 
 
-def get_doctors(specialty: str | None, lat: float | None, lng: float | None) -> list[dict]:
+def get_doctors(
+    specialty: str | None,
+    lat: float | None,
+    lng: float | None,
+    radius_miles: int | None = None,
+    search: str | None = None,
+) -> list[dict]:
     query = supabase.table("doctors").select(
         "id,user_id,full_name,specialty,license_no,provider_npi,provider_dea,credential_verification_status,is_licensed,rating,review_count,review_source,lat,lng,address,availability"
     )
     if specialty:
-        query = query.eq("specialty", specialty)
+        query = query.ilike("specialty", f"%{specialty.strip()}%")
+    if search:
+        search_value = search.strip()
+        if search_value:
+            query = query.or_(
+                ",".join(
+                    [
+                        f"full_name.ilike.%{search_value}%",
+                        f"specialty.ilike.%{search_value}%",
+                        f"address.ilike.%{search_value}%",
+                    ]
+                )
+            )
+    # Rough latitude/longitude box from requested radius.
+    # 1 degree latitude ~= 69 miles.
+    effective_radius = float(radius_miles or 50)
+    lat_delta = max(effective_radius / 69.0, 0.1)
+    # Longitude miles/degree varies by latitude; 54 is a practical mid-latitude approximation.
+    lng_delta = max(effective_radius / 54.0, 0.1)
     if lat is not None:
-        query = query.gte("lat", lat - 1.0).lte("lat", lat + 1.0)
+        query = query.gte("lat", lat - lat_delta).lte("lat", lat + lat_delta)
     if lng is not None:
-        query = query.gte("lng", lng - 1.0).lte("lng", lng + 1.0)
+        query = query.gte("lng", lng - lng_delta).lte("lng", lng + lng_delta)
     return query.execute().data or []
 
 
@@ -162,6 +186,16 @@ def get_appointments_for_doctor(doctor_id: str) -> list[dict]:
         .execute()
     )
     return res.data or []
+
+
+def reschedule_appointment(appointment_id: str, new_scheduled_at: str) -> dict:
+    res = (
+        supabase.table("appointments")
+        .update({"scheduled_at": new_scheduled_at, "status": "confirmed"})
+        .eq("id", appointment_id)
+        .execute()
+    )
+    return _first_or_none(res.data) or {}
 
 
 def update_appointment_status(appointment_id: str, status: str) -> dict:
@@ -546,6 +580,86 @@ def get_appointment(appointment_id: str) -> dict | None:
     return _first_or_none(res.data)
 
 
+def doctor_owns_appointment(doctor_id: str, appointment_id: str) -> bool:
+    appt = get_appointment(appointment_id)
+    if not appt:
+        return False
+    return appt.get("doctor_id") == doctor_id
+
+
+def patient_owns_appointment(patient_id: str, appointment_id: str) -> bool:
+    appt = get_appointment(appointment_id)
+    if not appt:
+        return False
+    return appt.get("patient_id") == patient_id
+
+
+def get_all_appointments() -> list[dict]:
+    """Return every appointment in the system — used as demo fallback for doctor portal."""
+    res = (
+        supabase.table("appointments")
+        .select("id,patient_id,doctor_id,scheduled_at,status,workflow_status,notes,created_at")
+        .order("scheduled_at", desc=False)
+        .limit(200)
+        .execute()
+    )
+    return res.data or []
+
+
+def get_or_create_doctor_profile(user_id: str) -> dict | None:
+    """Return the doctor profile for user_id, creating a minimal one if it doesn't exist."""
+    existing = get_doctor_by_user_id(user_id)
+    if existing:
+        return existing
+    user_row = supabase.table("users").select("id,full_name").eq("id", user_id).limit(1).execute()
+    user = _first_or_none(user_row.data)
+    if not user:
+        return None
+    res = (
+        supabase.table("doctors")
+        .insert({
+            "user_id": user_id,
+            "full_name": user.get("full_name") or "Doctor",
+            "specialty": "General Practice",
+            "license_no": f"DEMO-{user_id[:8].upper()}",
+            "lat": 40.7128,
+            "lng": -74.0060,
+            "address": "100 Medical Plaza, New York, NY 10001",
+        })
+        .execute()
+    )
+    return _first_or_none(res.data)
+
+
+def get_or_create_any_doctor() -> dict | None:
+    """Find or auto-create any doctor profile — used as a booking target when no DB doctors exist."""
+    res = supabase.table("doctors").select("id,user_id,full_name,specialty").limit(1).execute()
+    existing = _first_or_none(res.data)
+    if existing:
+        return existing
+    # Try to find a doctor-role user and create a profile for them
+    user_res = (
+        supabase.table("users").select("id,full_name").eq("role", "doctor").limit(1).execute()
+    )
+    user = _first_or_none(user_res.data)
+    if not user:
+        return None
+    insert_res = (
+        supabase.table("doctors")
+        .insert({
+            "user_id": user["id"],
+            "full_name": user.get("full_name") or "Demo Doctor",
+            "specialty": "General Practice",
+            "license_no": f"DEMO-{user['id'][:8].upper()}",
+            "lat": 40.7128,
+            "lng": -74.0060,
+            "address": "100 Medical Plaza, New York, NY 10001",
+        })
+        .execute()
+    )
+    return _first_or_none(insert_res.data)
+
+
 def get_doctor_by_user_id(user_id: str) -> dict | None:
     res = (
         supabase.table("doctors")
@@ -569,3 +683,16 @@ def get_fhir_record_by_soap_note(soap_note_id: str, resource_type: str = "Bundle
         .execute()
     )
     return _first_or_none(res.data)
+
+
+def get_prescriptions_for_doctor(doctor_id: str) -> list[dict]:
+    res = (
+        supabase.table("prescriptions")
+        .select(
+            "id,appointment_id,patient_id,doctor_id,requested_medication,approval_status,block_reason,clinic_name,provider_display_name,provider_license_id,clinic_logo_url,prescription_pdf_generated_at,document_reference_id,created_at"
+        )
+        .eq("doctor_id", doctor_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return res.data or []
