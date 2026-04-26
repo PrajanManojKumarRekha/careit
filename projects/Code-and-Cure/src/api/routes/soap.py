@@ -1,8 +1,14 @@
+import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
+
+_SESSION_TTL_HOURS = 2
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import Response
 from src.api.models import (
     ConsultationTranscript,
     SOAPNote,
@@ -35,15 +41,28 @@ from src.core_logic.transcriber import (
     SUPPORTED_CONTENT_TYPES,
     WHISPER_API_MAX_BYTES,
 )
+from src.core_logic.models import SoapNote as CoreSoapNote
+from src.core_logic.soap_pdf import render_soap_note_pdf_bytes
 from src.database.db_client import (
     insert_soap_note,
     approve_soap_note,
     update_soap_note_content,
     get_soap_note_by_appointment,
-    get_doctor_by_user_id,
+    get_or_create_doctor_profile,
 )
 
 router = APIRouter()
+def _require_doctor_appointment_access(current_user: dict, appointment_id: str) -> dict:
+    """Ensure caller is a doctor. Auto-creates profile if needed.
+    Ownership check is relaxed for demo: all doctor-role users can access all appointments
+    (matching the dashboard where all appointments are visible to any logged-in doctor).
+    """
+    doctor = get_or_create_doctor_profile(current_user["user_id"])
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
+    return doctor
+
+
 
 # ---------------------------------------------------------------------------
 # In-memory session store
@@ -51,6 +70,18 @@ router = APIRouter()
 # attempted opportunistically and is non-blocking if unavailable.
 # ---------------------------------------------------------------------------
 _sessions: dict[str, ConsultationSession] = {}
+
+
+def _evict_stale_sessions() -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=_SESSION_TTL_HOURS)
+    stale = [
+        sid for sid, s in _sessions.items()
+        if datetime.fromisoformat(s.created_at) < cutoff
+    ]
+    for sid in stale:
+        _sessions.pop(sid, None)
+    if stale:
+        logger.info("Evicted %d stale session(s): %s", len(stale), stale)
 
 
 def _get_session(session_id: str) -> ConsultationSession:
@@ -101,6 +132,8 @@ async def transcribe_upload(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
+    _require_doctor_appointment_access(current_user, appointment_id)
+
     """
     Doctor-only. Upload a consultation recording (MP4, WebM, M4A, MP3, WAV)
     and receive a fully parsed SOAP draft in one call.
@@ -203,7 +236,7 @@ async def transcribe_upload(
     # 5. Persist soap_note to DB (best-effort — non-blocking on failure)
     warning: str | None = None
     try:
-        doctor = get_doctor_by_user_id(current_user["user_id"])
+        doctor = get_or_create_doctor_profile(current_user["user_id"])
         doctor_id = doctor["id"] if doctor else current_user["user_id"]
 
         soap_fields = dict(
@@ -276,6 +309,7 @@ async def start_session(
     The provider_mode field tells the client whether a real ASR backend is
     active ('asr') or whether manual text input is required ('fallback').
     """
+    _evict_stale_sessions()
     provider = build_provider()
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -401,6 +435,7 @@ async def finalize_session_route(
       'partial' or 'sufficient', signalling the doctor can proceed to approve.
     - Existing /soap/approve flow is unchanged; this just hands off.
     """
+    _require_doctor_appointment_access(current_user, _get_session(session_id).appointment_id)
     session = _get_session(session_id)
     finalize_session(session)
 
@@ -415,7 +450,7 @@ async def finalize_session_route(
 
     # Persist final SOAP draft as unapproved draft note (best-effort)
     try:
-        doctor = get_doctor_by_user_id(current_user["user_id"])
+        doctor = get_or_create_doctor_profile(current_user["user_id"])
         doctor_id = doctor["id"] if doctor else current_user["user_id"]
         existing = get_soap_note_by_appointment(session.appointment_id)
         soap_fields = dict(
@@ -433,9 +468,10 @@ async def finalize_session_route(
                 doctor_id=doctor_id,
                 **soap_fields,
             )
-    except Exception:
-        # Non-blocking: SOAP note persistence failure does not abort finalize
-        pass
+    except Exception as exc:
+        logger.warning("SOAP persistence failed during finalize for session %s: %s", session_id, exc)
+
+    _sessions.pop(session_id, None)
 
     return SessionFinalizeResponse(
         session_id=session_id,
@@ -465,6 +501,8 @@ async def append_transcript_chunk(
     request: TranscriptChunkRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    _require_doctor_appointment_access(current_user, request.appointment_id)
+
     """
     Doctor-only route — real-time transcript ingestion (sessionless mode).
 
@@ -477,8 +515,8 @@ async def append_transcript_chunk(
     if not chunk:
         raise HTTPException(status_code=400, detail="Transcript chunk cannot be empty.")
 
-    # Resolve users.id -> doctors.id
-    doctor = get_doctor_by_user_id(current_user["user_id"])
+    # Resolve users.id -> doctors.id (auto-creates profile if needed)
+    doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
     doctor_id = doctor["id"]
@@ -566,8 +604,8 @@ async def approve_soap_note_route(
     doctor_user_id = current_user["user_id"]
     note = request.edited_note
 
-    # Resolve users.id -> doctors.id
-    doctor = get_doctor_by_user_id(doctor_user_id)
+    # Resolve users.id -> doctors.id (auto-creates profile if needed)
+    doctor = get_or_create_doctor_profile(doctor_user_id)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
     doctor_id = doctor["id"]
@@ -606,4 +644,99 @@ async def approve_soap_note_route(
         "record_status": "APPROVED",
         "note_id": note_id,
         "approved_at": approved.get("approved_at"),
+    }
+
+
+@router.get(
+    "/{appointment_id}/document/download",
+    dependencies=[Depends(require_role("doctor"))],
+)
+async def download_soap_document(
+    appointment_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Download the generated SOAP note as a PDF document.
+    """
+    _require_doctor_appointment_access(current_user, appointment_id)
+    soap_row = get_soap_note_by_appointment(appointment_id)
+    if not soap_row:
+        raise HTTPException(status_code=404, detail="SOAP note not found for this appointment.")
+
+    pdf_bytes = render_soap_note_pdf_bytes(
+        CoreSoapNote(
+            subjective=soap_row.get("subjective", ""),
+            objective=soap_row.get("objective", ""),
+            assessment=soap_row.get("assessment", ""),
+            plan=soap_row.get("plan", ""),
+        )
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="soap-{appointment_id}.pdf"'},
+    )
+
+
+@router.post(
+    "/{appointment_id}/document/reupload",
+    dependencies=[Depends(require_role("doctor"))],
+)
+async def reupload_soap_document(
+    appointment_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Accept an updated SOAP document from downstream systems and append it to
+    the note transcript for audit visibility.
+    """
+    _require_doctor_appointment_access(current_user, appointment_id)
+    soap_row = get_soap_note_by_appointment(appointment_id)
+    if not soap_row:
+        raise HTTPException(status_code=404, detail="SOAP note not found for this appointment.")
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded document is empty.")
+
+    if len(payload) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Uploaded document exceeds 5 MB limit.")
+
+    audit_line = f"[Reuploaded document received: {file.filename or 'document'} | bytes={len(payload)}]"
+    update_soap_note_content(
+        note_id=soap_row["id"],
+        subjective=soap_row.get("subjective", ""),
+        objective=soap_row.get("objective", ""),
+        assessment=soap_row.get("assessment", ""),
+        plan=soap_row.get("plan", ""),
+        raw_transcript=f"{soap_row.get('raw_transcript', '')}\n{audit_line}".strip(),
+    )
+    return {"status": "success", "message": "Updated SOAP document received and linked to this appointment."}
+
+
+@router.post(
+    "/{appointment_id}/document/email",
+    dependencies=[Depends(require_role("doctor"))],
+)
+async def email_soap_document(
+    appointment_id: str,
+    target_email: str = Form(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Simulated email handoff for multi-system workflows.
+    """
+    _require_doctor_appointment_access(current_user, appointment_id)
+    soap_row = get_soap_note_by_appointment(appointment_id)
+    if not soap_row:
+        raise HTTPException(status_code=404, detail="SOAP note not found for this appointment.")
+    if "@" not in target_email:
+        raise HTTPException(status_code=422, detail="target_email must be a valid email address.")
+
+    return {
+        "status": "queued_simulated",
+        "appointment_id": appointment_id,
+        "target_email": target_email,
+        "message": "SOAP document handoff queued to external system (simulated).",
     }

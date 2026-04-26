@@ -37,6 +37,9 @@ class Doctor(BaseModel):
     location: str   # mapped from DB address
     rating: float
     review_count: int
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    distance_miles: Optional[float] = None
 
 class AppointmentSlot(BaseModel):
     id: str
@@ -48,6 +51,9 @@ class BookingRequest(BaseModel):
     doctor_id: str              # doctors.id (DB primary key from /doctors list)
     scheduled_at: str           # ISO-8601 datetime string (from slot start_time)
     slot_id: Optional[str] = None  # UI context only; not persisted to DB
+
+class RescheduleRequest(BaseModel):
+    new_scheduled_at: str       # ISO-8601 datetime string for the new time
 
 # --- Intake Models ---
 # Field names align with DB schema (intake_forms table)
@@ -103,6 +109,22 @@ class DigitalPrescription(BaseModel):
     medications: List[PrescriptionItem]
     notes: Optional[str] = None
     prescribed_at: datetime = Field(default_factory=datetime.now)
+
+
+class PrescriptionCreateRequest(BaseModel):
+    appointment_id: str
+    medication_name: str
+
+
+class PrescriptionResponse(BaseModel):
+    id: str
+    appointment_id: str
+    patient_id: str
+    doctor_id: str
+    requested_medication: str
+    approval_status: str
+    block_reason: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 # --- EHR Export Models (FHIR R4 Alignment) ---
 class EHRExportRequest(BaseModel):
