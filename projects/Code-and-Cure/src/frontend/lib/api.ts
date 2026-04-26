@@ -384,5 +384,10 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ appointment_id, medication_name }),
       }),
+    remove: (prescription_id: string) =>
+      apiFetch<{ status: string; message: string; prescription_id: string }>(
+        `/api/v1/prescriptions/${prescription_id}`,
+        { method: "DELETE" }
+      ),
   },
 };

@@ -212,6 +212,18 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
     }
   };
 
+  const removePrescription = async (prescriptionId: string) => {
+    const confirmed = window.confirm("Remove this prescription?");
+    if (!confirmed) return;
+    setPrescriptionError(null);
+    try {
+      await api.prescriptions.remove(prescriptionId);
+      setPrescriptions((prev) => prev.filter((p) => p.id !== prescriptionId));
+    } catch (e: unknown) {
+      setPrescriptionError(e instanceof Error ? e.message : "Failed to remove prescription");
+    }
+  };
+
   const downloadSoapDoc = async () => {
     const blob = await api.soap.downloadDocument(appointmentId);
     const url  = URL.createObjectURL(blob);
@@ -595,10 +607,18 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
               {prescriptionError && <p className="text-caption text-error">{prescriptionError}</p>}
               <div className="space-y-2 max-h-36 overflow-y-auto">
                 {prescriptions.map((p) => (
-                  <div key={p.id} className="text-caption border border-outline-variant/30 rounded-xl px-sm py-xs bg-surface-container-low">
-                    <span className="font-semibold text-on-surface">{p.requested_medication}</span>
-                    <span className="text-outline"> · {p.approval_status}</span>
-                    {p.block_reason ? <span className="text-error"> ({p.block_reason})</span> : null}
+                  <div key={p.id} className="text-caption border border-outline-variant/30 rounded-xl px-sm py-xs bg-surface-container-low flex items-center justify-between gap-2">
+                    <div>
+                      <span className="font-semibold text-on-surface">{p.requested_medication}</span>
+                      <span className="text-outline"> · {p.approval_status}</span>
+                      {p.block_reason ? <span className="text-error"> ({p.block_reason})</span> : null}
+                    </div>
+                    <button
+                      onClick={() => removePrescription(p.id)}
+                      className="text-error text-caption font-semibold hover:underline"
+                    >
+                      Remove
+                    </button>
                   </div>
                 ))}
                 {prescriptions.length === 0 && <p className="text-caption text-outline">No prescriptions yet.</p>}
