@@ -1,9 +1,9 @@
+import os
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from fastapi import HTTPException
 
-# Secret key for signing tokens (loaded from .env in production)
-SECRET_KEY = "careit-hackathon-secret-key-2026"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "careit-hackathon-secret-key-2026")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
 

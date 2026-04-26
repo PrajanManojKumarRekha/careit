@@ -1,9 +1,12 @@
+import logging
 from fastapi import APIRouter, HTTPException, Depends
 from passlib.context import CryptContext
 from src.api.models import UserLogin, UserRegister, AuthResponse
 from src.api.jwt_handler import create_token
 from src.api.dependencies import get_current_user
 from src.database.db_client import get_user_by_email, insert_user, insert_doctor_profile
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -46,8 +49,8 @@ async def register(user: UserRegister):
                 lng=-122.4194,
                 address="To be updated",
             )
-        except Exception:
-            pass  # Non-blocking — doctor can still log in; profile can be seeded later
+        except Exception as exc:
+            logger.warning("Doctor profile creation failed for user %s: %s", row["id"], exc)
 
     return {
         "user_id": row["id"],
