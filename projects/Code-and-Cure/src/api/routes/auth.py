@@ -3,7 +3,7 @@ from passlib.context import CryptContext
 from src.api.models import UserLogin, UserRegister, AuthResponse
 from src.api.jwt_handler import create_token
 from src.api.dependencies import get_current_user
-from src.database.db_client import get_user_by_email, insert_user
+from src.database.db_client import get_user_by_email, insert_user, insert_doctor_profile
 
 router = APIRouter()
 
@@ -34,6 +34,20 @@ async def register(user: UserRegister):
 
     if not row or not row.get("id"):
         raise HTTPException(status_code=500, detail="Failed to register user.")
+
+    # Auto-create a linked doctors table row for any doctor account
+    if user.role == "doctor":
+        try:
+            insert_doctor_profile(
+                user_id=row["id"],
+                specialty="General Practice",
+                license_no="PENDING",
+                lat=37.7749,
+                lng=-122.4194,
+                address="To be updated",
+            )
+        except Exception:
+            pass  # Non-blocking — doctor can still log in; profile can be seeded later
 
     return {
         "user_id": row["id"],

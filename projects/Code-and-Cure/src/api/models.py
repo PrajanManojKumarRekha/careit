@@ -59,6 +59,17 @@ class IntakeForm(BaseModel):
     allergies: Optional[str] = None
     patient_id: Optional[str] = None    # Populated on GET from DB; ignored from client on POST
 
+# --- Transcript streaming models ---
+class TranscriptChunkRequest(BaseModel):
+    appointment_id: str
+    chunk: str  # Incremental transcript text from the consultation session
+
+class TranscriptChunkResponse(BaseModel):
+    appointment_id: str
+    transcript_so_far: str   # Full accumulated transcript for this session
+    soap_draft: "SOAPNote"   # Live SOAP draft re-parsed from full transcript
+    is_updated: bool
+
 # --- Consultation & SOAP Models ---
 class ConsultationTranscript(BaseModel):
     appointment_id: str
@@ -103,3 +114,102 @@ class EHRExportResponse(BaseModel):
     status: str  # "success" or "pending"
     fhir_bundle: Dict  # Raw FHIR R4 JSON
     submission_timestamp: datetime
+
+# --- Synthetic EMR Handoff Models ---
+class EMRHandoffResponse(BaseModel):
+    submission_id: str
+    target_emr: str                        # e.g. "Athenahealth-sim"
+    status: str                            # "acknowledged_simulated" | "failed_simulated"
+    fhir_bundle_id: str                    # fhir_records.id of the source Bundle
+    payload_hash: str                      # first 16 hex chars of SHA-256(bundle JSON)
+    submitted_at: datetime
+    acknowledged_at: Optional[datetime] = None
+    simulated_response: Dict = {}          # synthetic ACK payload shown to judges
+
+
+# --- Real-time Session Models ---
+
+class SessionStartRequest(BaseModel):
+    appointment_id: str
+    language: str = "en"
+    source_language: str = "en"
+    target_language: str = "en"
+
+
+class SessionStartResponse(BaseModel):
+    session_id: str
+    appointment_id: str
+    status: str              # "active"
+    provider_mode: str       # "fallback" | "asr" | "asr_stub"
+    language: str
+    created_at: str
+
+
+class SOAPDraftMeta(BaseModel):
+    derived_from_transcript: bool = True
+    transcript_chars_processed: int = 0
+    update_timestamp: str = ""
+    chunk_index: int = 0
+    quality_hint: str = "minimal"    # "minimal" | "partial" | "sufficient"
+    change_summary: str = ""
+
+
+class SOAPDraftWithMeta(BaseModel):
+    subjective: str = ""
+    objective: str = ""
+    assessment: str = ""
+    plan: str = ""
+    metadata: SOAPDraftMeta = Field(default_factory=SOAPDraftMeta)
+
+
+class SessionChunkRequest(BaseModel):
+    appointment_id: str
+    chunk_index: int        # monotonic 0-based; server enforces ordering
+    transcript_chunk: str   # pre-transcribed text (fallback mode) or raw audio ref (future)
+    language: str = "en"
+
+
+class SessionChunkResponse(BaseModel):
+    session_id: str
+    appointment_id: str
+    chunk_index: int
+    transcript_so_far: str
+    soap_draft: SOAPDraftWithMeta
+    provider_status: str    # "processed" | "fallback_mode" | "error:..."
+    session_status: str     # "active" | "finalized"
+
+
+class SessionStateResponse(BaseModel):
+    session_id: str
+    appointment_id: str
+    status: str             # "active" | "finalized"
+    transcript: str
+    last_chunk_index: int
+    soap_draft: Optional[SOAPDraftWithMeta] = None
+    provider_mode: str
+    language: str
+    created_at: str
+    updated_at: str
+
+
+class SessionFinalizeResponse(BaseModel):
+    session_id: str
+    appointment_id: str
+    status: str             # "finalized"
+    transcript: str
+    final_soap: SOAPDraftWithMeta
+    handoff_ready: bool     # True when quality_hint is "partial" or "sufficient"
+    message: str
+
+
+# --- Video Upload Transcription Models ---
+
+class TranscribeUploadResponse(BaseModel):
+    appointment_id: str
+    transcript: str
+    soap_draft: SOAPDraftWithMeta
+    transcription_provider: str      # "openai_whisper_api" | "local_whisper"
+    language_detected: str
+    duration_seconds: Optional[float] = None
+    file_info: Dict                  # {filename, size_mb, content_type}
+    warning: Optional[str] = None

@@ -1,6 +1,18 @@
-﻿.venv/
-__init__.py
-routes/__init__.py
+﻿# Secrets
+.env
+.env.local
+.env.*.local
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# AI context files
 AI.md
 ai.md
 context.md
@@ -8,6 +20,3 @@ Context.md
 CONTEXT.md
 ToDo.md
 TODO.md
-.env
-__pycache__/
-
