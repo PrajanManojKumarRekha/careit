@@ -3,8 +3,14 @@ from typing import List, Optional, Dict
 from datetime import datetime
 
 # --- Auth Models ---
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    role: str # 'patient' or 'doctor'
+
 class UserLogin(BaseModel):
-    username: str
+    email: str
     password: str
 
 class AuthResponse(BaseModel):
@@ -40,7 +46,14 @@ class AppointmentSlot(BaseModel):
 
 class BookingRequest(BaseModel):
     slot_id: str
-    patient_id: str
+
+# --- Intake Models ---
+class IntakeForm(BaseModel):
+    appointment_id: str
+    chief_complaint: str
+    medical_history: Optional[str] = None
+    current_medications: Optional[str] = None
+    allergies: Optional[str] = None
 
 # --- Consultation & SOAP Models ---
 class ConsultationTranscript(BaseModel):
@@ -52,6 +65,10 @@ class SOAPNote(BaseModel):
     objective: str
     assessment: str
     plan: str
+
+class SOAPApprovalRequest(BaseModel):
+    appointment_id: str
+    edited_note: SOAPNote
 
 class FHIRRecord(BaseModel):
     resourceType: str = "Bundle"

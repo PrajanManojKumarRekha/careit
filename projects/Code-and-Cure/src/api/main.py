@@ -1,9 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from src.api.jwt_handler import decode_token
 
 # Import routes (Will be enabled as we build them)
-from src.api.routes import auth, symptoms, doctors, appointments
-# from src.api.routes import soap, prescriptions, fhir
+from src.api.routes import auth, symptoms, doctors, appointments, intake, soap, fhir
+# from src.api.routes import prescriptions
 
 app = FastAPI(
     title="CareIT Telehealth API",
@@ -18,8 +20,35 @@ app.add_middleware(
     allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"], 
 )
+
+# --- AUDIT LOG MIDDLEWARE ---
+# Intercepts every mutating request to log the action to the DB.
+class AuditLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # 1. Let the request proceed through the router
+        response = await call_next(request)
+        
+        # 2. Only log mutations (writes, updates, deletes)
+        if request.method in ["POST", "PATCH", "DELETE"]:
+            user_id = "anonymous"
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                try:
+                    payload = decode_token(auth_header.split(" ")[1])
+                    user_id = payload.get("user_id", "unknown")
+                except Exception:
+                    pass # Invalid tokens are handled by routes, we just log "anonymous"
+            
+            # Mock Person 4 DB Call
+            # from src.database.db_client import log_action
+            client_ip = request.client.host if request.client else "unknown"
+            print(f"[AUDIT] User: {user_id} | Action: {request.method} {request.url.path} | IP: {client_ip}")
+            
+        return response
+
+app.add_middleware(AuditLogMiddleware)
 
 @app.get("/")
 async def root():
@@ -34,8 +63,10 @@ async def root():
 # --- ROUTER INCLUSIONS (Plug-and-Play) ---
 # We will enable these one by one as we build the individual files.
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(symptoms.router, prefix="/api/v1/intake", tags=["Symptom Analysis"])
+app.include_router(symptoms.router, prefix="/api/v1/symptoms", tags=["Symptom Analysis"])
+app.include_router(intake.router, prefix="/api/v1/intake", tags=["Intake Forms"])
 app.include_router(doctors.router, prefix="/api/v1/doctors", tags=["Discovery"])
 app.include_router(appointments.router, prefix="/api/v1/appointments", tags=["Booking"])
-# app.include_router(soap.router, prefix="/api/v1/soap", tags=["Clinical Documentation"])
+app.include_router(soap.router, prefix="/api/v1/soap", tags=["Clinical Documentation"])
+app.include_router(fhir.router, prefix="/api/v1/fhir", tags=["EMR Export"])
 # app.include_router(prescriptions.router, prefix="/api/v1/prescriptions", tags=["Pharmacy"])

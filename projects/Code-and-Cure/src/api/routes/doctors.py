@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from src.api.models import Doctor, AppointmentSlot
-from typing import List
+from src.api.dependencies import require_role
+from typing import List, Optional
 from datetime import datetime, timedelta
 
 router = APIRouter()
@@ -30,8 +31,13 @@ MOCK_DOCTORS = [
     Doctor(id="doc-010", name="Dr. David Kim", specialty="General Practice", location="Houston, TX", rating=4.8, review_count=245),
 ]
 
-@router.get("/", response_model=List[Doctor])
-async def list_doctors(specialty: str = Query(None, description="Filter by specialty")):
+@router.get("/", response_model=List[Doctor], dependencies=[Depends(require_role("patient"))])
+async def list_doctors(
+    specialty: Optional[str] = Query(None, description="Filter by specialty"),
+    latitude: Optional[float] = Query(None, description="Patient latitude for radius search"),
+    longitude: Optional[float] = Query(None, description="Patient longitude for radius search"),
+    radius: Optional[int] = Query(None, description="Search radius in miles")
+):
     """
     Doctor Discovery: Returns a list of doctors with Google Review ratings.
     Optionally filtered by specialty (from symptom analysis).
@@ -46,7 +52,7 @@ async def list_doctors(specialty: str = Query(None, description="Filter by speci
 
     return MOCK_DOCTORS
 
-@router.get("/{doctor_id}/slots", response_model=List[AppointmentSlot])
+@router.get("/{doctor_id}/slots", response_model=List[AppointmentSlot], dependencies=[Depends(require_role("patient"))])
 async def get_available_slots(doctor_id: str):
     """
     Returns dynamically generated time slots for a specific doctor.
