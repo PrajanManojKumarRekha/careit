@@ -1,0 +1,17 @@
+AI.md
+context.md
+questions.md
+biggerscope.md
+teammate.md
+plan.md
+
+.cursorrules
+refs/rewritten/origin-Eric-2
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.env
+.env.local
+.env.*.local
