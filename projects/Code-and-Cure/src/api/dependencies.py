@@ -1,12 +1,14 @@
-from fastapi import Depends, HTTPException, Security
+from fastapi import Cookie, Depends, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from src.api.config import JWT_COOKIE_NAME
 from src.api.jwt_handler import decode_token
 
 # This automatically extracts the Bearer token from the Authorization header
-security_scheme = HTTPBearer()
+security_scheme = HTTPBearer(auto_error=False)
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(security_scheme)
+    credentials: HTTPAuthorizationCredentials | None = Security(security_scheme),
+    access_token: str | None = Cookie(default=None, alias=JWT_COOKIE_NAME),
 ) -> dict:
     """
     Reads the JWT from the 'Authorization: Bearer <token>' header,
@@ -15,7 +17,10 @@ async def get_current_user(
     
     If the token is missing or invalid, this throws a 401 Unauthorized.
     """
-    return decode_token(credentials.credentials)
+    token = credentials.credentials if credentials else access_token
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return decode_token(token)
 
 def require_role(required_role: str):
     """

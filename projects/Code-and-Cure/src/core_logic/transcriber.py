@@ -1,4 +1,4 @@
-"""Audio/video transcription provider with graceful fallback.
+"""Audio/video transcription provider with provider fallback.
 
 Priority chain:
   1. OpenAI Whisper API  — if OPENAI_API_KEY env var is set
@@ -86,24 +86,9 @@ def transcribe_audio(
     except Exception:
         pass
 
-    # Demo fallback: generate a realistic placeholder transcript so the UI workflow
-    # still runs end-to-end even without a transcription provider.
-    demo_transcript = (
-        "Patient reports persistent headache lasting three days, rated 7 out of 10 in severity. "
-        "Onset was gradual, located in the frontal and temporal regions, with associated nausea and light sensitivity. "
-        "No fever or neck stiffness. "
-        "Vital signs: blood pressure 118/76, heart rate 72 bpm, temperature 98.6°F, oxygen saturation 99%. "
-        "Neurological exam within normal limits. Pupils equal and reactive. No focal deficits. "
-        "Assessment: tension-type headache, likely triggered by dehydration and screen time. "
-        "Plan: recommend hydration, rest, over-the-counter ibuprofen 400mg as needed, "
-        "avoid bright screens, follow up in 1 week if symptoms persist or worsen. "
-        "Patient verbally agrees with the plan and has no further questions."
-    )
-    return TranscriptionResult(
-        transcript=demo_transcript,
-        provider="demo_fallback",
-        language_detected="en",
-        duration_seconds=None,
+    raise TranscriptionError(
+        code="TRANSCRIPTION_PROVIDER_UNAVAILABLE",
+        message=f"No transcription provider available. Last OpenAI API status: {_last_api_error}",
     )
 
 

@@ -1,8 +1,43 @@
-const BASE = "http://localhost:8000";
+function resolveApiBaseUrl(): string {
+  const configuredBase =
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:8000";
+  return configuredBase.trim().replace(/\/$/, "");
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export function getStoredToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("careit_access_token");
+  return null;
+}
+
+function formatErrorDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object") {
+          const obj = entry as { msg?: unknown; loc?: unknown };
+          const msg = typeof obj.msg === "string" ? obj.msg : null;
+          const loc = Array.isArray(obj.loc) ? obj.loc.join(".") : null;
+          if (msg && loc) return `${loc}: ${msg}`;
+          if (msg) return msg;
+        }
+        return null;
+      })
+      .filter((value): value is string => Boolean(value));
+    if (messages.length) return messages.join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    const obj = detail as { message?: unknown; detail?: unknown; error?: unknown };
+    if (typeof obj.message === "string" && obj.message.trim()) return obj.message;
+    if (typeof obj.error === "string" && obj.error.trim()) return obj.error;
+  }
+  return fallback;
 }
 
 // Standard JSON fetch with Authorization header
@@ -14,10 +49,20 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers, credentials: "include" });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        `Unable to reach the API at ${API_BASE_URL}. Check NEXT_PUBLIC_API_BASE_URL/NEXT_PUBLIC_API_URL, the backend server, and CORS settings.`
+      );
+    }
+    throw error;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    throw new Error(formatErrorDetail(err.detail, `HTTP ${res.status}`));
   }
   return res.json();
 }
@@ -28,30 +73,50 @@ async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: formData,
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        `Unable to reach the API at ${API_BASE_URL}. Check NEXT_PUBLIC_API_BASE_URL/NEXT_PUBLIC_API_URL, the backend server, and CORS settings.`
+      );
+    }
+    throw error;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    throw new Error(formatErrorDetail(err.detail, `HTTP ${res.status}`));
   }
   return res.json();
 }
 
 export function setStoredToken(token: string) {
-  localStorage.setItem("careit_access_token", token);
+  void token;
 }
 
 export function clearStoredToken() {
-  localStorage.removeItem("careit_access_token");
+  return;
 }
 
 // ---- Types ----
 export interface AuthResponse {
-  access_token: string;
+  access_token?: string | null;
   role: string;
+  message?: string | null;
+}
+
+export interface AuthChallengeResponse {
+  status: string;
+  message: string;
+  email: string;
+  challenge_id: string;
+  role?: string | null;
 }
 
 export interface Doctor {
@@ -215,14 +280,29 @@ export interface Prescription {
 export const api = {
   auth: {
     login: (email: string, password: string) =>
-      apiFetch<AuthResponse>("/api/v1/auth/login", {
+      apiFetch<AuthChallengeResponse>("/api/v1/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       }),
+    verifyLogin: (email: string, code: string, challenge_id: string) =>
+      apiFetch<AuthResponse>("/api/v1/auth/login/verify", {
+        method: "POST",
+        body: JSON.stringify({ email, code, challenge_id }),
+      }),
     register: (email: string, password: string, full_name: string, role: string) =>
-      apiFetch("/api/v1/auth/register", {
+      apiFetch<AuthChallengeResponse>("/api/v1/auth/register", {
         method: "POST",
         body: JSON.stringify({ email, password, full_name, role }),
+      }),
+    verifyEmail: (email: string, code: string, challenge_id?: string) =>
+      apiFetch<{ status: string; message: string }>("/api/v1/auth/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email, code, challenge_id }),
+      }),
+    resendVerification: (email: string) =>
+      apiFetch<AuthChallengeResponse>("/api/v1/auth/resend-verification", {
+        method: "POST",
+        body: JSON.stringify({ email }),
       }),
     me: () => apiFetch<{ user_id: string; role: string }>("/api/v1/auth/me"),
   },
@@ -323,8 +403,9 @@ export const api = {
       }),
     downloadDocument: async (appointmentId: string) => {
       const token = getStoredToken();
-      const res = await fetch(`${BASE}/api/v1/soap/${appointmentId}/document/download`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/soap/${appointmentId}/document/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: "include",
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));

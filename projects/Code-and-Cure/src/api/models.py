@@ -1,21 +1,52 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Dict
 from datetime import datetime
 
 # --- Auth Models ---
 class UserRegister(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     full_name: str
     role: str  # 'patient' or 'doctor'
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 12:
+            raise ValueError("Password must be at least 12 characters long.")
+        return value
+
 class UserLogin(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
+class EmailOnlyRequest(BaseModel):
+    email: EmailStr
+
+class EmailCodeVerification(BaseModel):
+    email: EmailStr
+    code: str
+    challenge_id: Optional[str] = None
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) != 6 or not cleaned.isdigit():
+            raise ValueError("Verification code must be a 6-digit number.")
+        return cleaned
+
+class AuthChallengeResponse(BaseModel):
+    status: str
+    message: str
+    email: EmailStr
+    challenge_id: str
+    role: Optional[str] = None
+
 class AuthResponse(BaseModel):
-    access_token: str
+    access_token: Optional[str] = None
     role: str  # 'patient' or 'doctor'
+    message: Optional[str] = None
 
 # --- Symptom & Triage Models ---
 class SymptomRequest(BaseModel):

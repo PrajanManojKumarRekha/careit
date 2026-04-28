@@ -1,0 +1,17 @@
+.git
+.gitignore
+.pytest_cache
+.claude
+.cursor
+.env
+.env.local
+.env.*.local
+demo
+node_modules
+src/frontend/node_modules
+src/frontend/.next
+__pycache__
+*.pyc
+*.pyo
+*.log
+

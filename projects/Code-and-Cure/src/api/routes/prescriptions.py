@@ -6,6 +6,7 @@ from src.core_logic.models import PrescriptionRequest as CorePrescriptionRequest
 from src.core_logic.prescription_safety import check_prescription_safety
 from src.database.db_client import (
     delete_prescription,
+    doctor_owns_appointment,
     get_appointment,
     get_prescription_by_id,
     get_or_create_doctor_profile,
@@ -45,6 +46,8 @@ async def create_prescription(
     appt = get_appointment(request.appointment_id)
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found.")
+    if appt.get("doctor_id") != doctor["id"]:
+        raise HTTPException(status_code=403, detail="You can only create prescriptions for your own appointments.")
 
     # The current doctor UI sends only medication_name. Populate safe defaults
     # so policy checks still run without breaking the request contract.
@@ -82,8 +85,8 @@ async def remove_prescription(
     row = get_prescription_by_id(prescription_id)
     if not row:
         raise HTTPException(status_code=404, detail="Prescription not found.")
-
-    # Demo-friendly authorization: allow any doctor to clean up incorrect entries.
+    if not doctor_owns_appointment(doctor["id"], row["appointment_id"]):
+        raise HTTPException(status_code=403, detail="You can only remove prescriptions from your own appointments.")
     deleted = delete_prescription(prescription_id)
     if not deleted:
         raise HTTPException(status_code=500, detail="Failed to remove prescription.")

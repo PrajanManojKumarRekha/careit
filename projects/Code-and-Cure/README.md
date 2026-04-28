@@ -176,8 +176,23 @@ Create a `.env` file at the project root (or set these as system env vars):
 ```env
 SUPABASE_URL=<your_supabase_url>
 SUPABASE_KEY=<your_supabase_key>
-JWT_SECRET=<your_jwt_secret>
+JWT_SECRET_KEY=<your_jwt_secret>
+AUTH_EMAIL_FROM=<no-reply@example.com>
+SMTP_HOST=<smtp_host>
+SMTP_PORT=587
+SMTP_USERNAME=<smtp_username>
+SMTP_PASSWORD=<smtp_password>
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ALLOW_ONEDRIVE_DOTENV=true
 ```
+
+`NEXT_PUBLIC_API_BASE_URL` is the frontend variable the app reads for auth and API requests. The frontend also accepts `NEXT_PUBLIC_API_URL` as a compatibility fallback, but `NEXT_PUBLIC_API_BASE_URL` should be treated as canonical.
+
+If you are running locally from a OneDrive-synced workspace, set `ALLOW_ONEDRIVE_DOTENV=true` or move secrets to machine-level environment variables. Otherwise the backend intentionally ignores the local `.env` file for safety.
+
+For production, do not keep `.env` files inside a OneDrive-synced workspace. Use machine or platform environment variables instead.
+
+Before starting the API against an existing Supabase project, apply [scripts/auth_hardening.sql](/abs/path/C:/Users/praja/OneDrive/Projects/CareIT/hackathon-2026-projects/projects/Code-and-Cure/scripts/auth_hardening.sql). It adds email-verification, login-lockout, and OTP challenge tables/columns used by the hardened auth flow.
 
 > Doctor discovery does **not** need an API key — it uses public OpenStreetMap endpoints. If those are unreachable, the app falls back to the seeded doctors in Supabase automatically.
 
@@ -213,12 +228,14 @@ Frontend will be at `http://localhost:3000`. Open it in a browser. The frontend 
 You should be able to:
 
 1. Sign in as a patient
-2. Submit symptoms and get a specialty back
-3. See doctors and book a slot
-4. Sign out, sign in as a doctor
-5. Generate a SOAP from a pasted transcript
-6. Approve the SOAP
-7. Export a FHIR bundle
+2. Verify the email code sent during registration
+3. Complete sign-in with the emailed one-time code
+4. Submit symptoms and get a specialty back
+5. See doctors and book a slot
+6. Sign out, sign in as a doctor
+7. Generate a SOAP from a pasted transcript
+8. Approve the SOAP
+9. Export a FHIR bundle
 
 If any step fails, run the verification pipeline below before assuming it's a code bug.
 

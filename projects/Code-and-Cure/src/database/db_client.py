@@ -1,14 +1,37 @@
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from src.api.config import ALLOW_DOTENV, ALLOW_ONEDRIVE_DOTENV, IS_PRODUCTION
 
-load_dotenv()
+env_path = Path.cwd() / ".env"
+if ALLOW_DOTENV:
+    if "onedrive" in str(env_path).lower() and not ALLOW_ONEDRIVE_DOTENV:
+        print(
+            "[SECURITY] Skipping local .env from OneDrive-synced path. "
+            "Set machine-level environment variables or ALLOW_ONEDRIVE_DOTENV=true for local-only development."
+        )
+    else:
+        load_dotenv()
+elif IS_PRODUCTION and (Path.cwd() / ".env").exists():
+    print(
+        "[SECURITY] Ignoring local .env in production. "
+        "Use process-level environment variables instead."
+    )
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+def _read_env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+SUPABASE_URL = _read_env("SUPABASE_URL")
+SUPABASE_KEY = _read_env("SUPABASE_KEY")
 
 class _UnavailableDB:
     """Sentinel client used when Supabase credentials are absent at startup.
@@ -47,7 +70,10 @@ def _first_or_none(data: Any) -> dict | None:
 def get_user_by_email(email: str) -> dict | None:
     res = (
         supabase.table("users")
-        .select("id,email,password_hash,full_name,role,created_at,updated_at")
+        .select(
+            "id,email,password_hash,full_name,role,email_verified_at,failed_login_attempts,"
+            "locked_until,created_at,updated_at"
+        )
         .eq("email", email)
         .limit(1)
         .execute()
@@ -64,11 +90,105 @@ def insert_user(email: str, password_hash: str, full_name: str, role: str) -> di
                 "password_hash": password_hash,
                 "full_name": full_name,
                 "role": role,
+                "failed_login_attempts": 0,
             }
         )
         .execute()
     )
     return _first_or_none(res.data) or {}
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    res = (
+        supabase.table("users")
+        .select(
+            "id,email,password_hash,full_name,role,email_verified_at,failed_login_attempts,"
+            "locked_until,created_at,updated_at"
+        )
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    return _first_or_none(res.data)
+
+
+def update_user_auth_state(user_id: str, **fields: Any) -> dict:
+    payload = {key: value for key, value in fields.items()}
+    res = (
+        supabase.table("users")
+        .update(payload)
+        .eq("id", user_id)
+        .execute()
+    )
+    return _first_or_none(res.data) or {}
+
+
+def insert_auth_challenge(
+    user_id: str,
+    purpose: str,
+    code_hash: str,
+    expires_at: str,
+) -> dict:
+    res = (
+        supabase.table("auth_challenges")
+        .insert(
+            {
+                "user_id": user_id,
+                "purpose": purpose,
+                "code_hash": code_hash,
+                "expires_at": expires_at,
+            }
+        )
+        .execute()
+    )
+    return _first_or_none(res.data) or {}
+
+
+def get_auth_challenge(challenge_id: str) -> dict | None:
+    res = (
+        supabase.table("auth_challenges")
+        .select("id,user_id,purpose,code_hash,expires_at,consumed_at,created_at")
+        .eq("id", challenge_id)
+        .limit(1)
+        .execute()
+    )
+    return _first_or_none(res.data)
+
+
+def get_active_auth_challenge(user_id: str, purpose: str) -> dict | None:
+    res = (
+        supabase.table("auth_challenges")
+        .select("id,user_id,purpose,code_hash,expires_at,consumed_at,created_at")
+        .eq("user_id", user_id)
+        .eq("purpose", purpose)
+        .is_("consumed_at", "null")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return _first_or_none(res.data)
+
+
+def consume_auth_challenge(challenge_id: str, consumed_at: str) -> dict:
+    res = (
+        supabase.table("auth_challenges")
+        .update({"consumed_at": consumed_at})
+        .eq("id", challenge_id)
+        .execute()
+    )
+    return _first_or_none(res.data) or {}
+
+
+def invalidate_auth_challenges(user_id: str, purpose: str, consumed_at: str) -> list[dict]:
+    res = (
+        supabase.table("auth_challenges")
+        .update({"consumed_at": consumed_at})
+        .eq("user_id", user_id)
+        .eq("purpose", purpose)
+        .is_("consumed_at", "null")
+        .execute()
+    )
+    return res.data or []
 
 
 def insert_doctor_profile(

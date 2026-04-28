@@ -2,35 +2,121 @@
 
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { API_BASE_URL, AuthChallengeResponse } from "@/lib/api";
 
 export default function Home() {
-  const { login, demoLogin } = useAuth();
-  const [email, setEmail]       = useState("");
+  const { login, verifyLogin, register } = useAuth();
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [role, setRole] = useState<"patient" | "doctor">("patient");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError]       = useState<string | null>(null);
-  const [loading, setLoading]   = useState(false);
-  const [demoLoading, setDemoLoading] = useState<"patient" | "doctor" | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [pendingChallenge, setPendingChallenge] = useState<AuthChallengeResponse | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const authStep = pendingChallenge?.status === "verification_required"
+    ? "verify_email"
+    : pendingChallenge?.status === "mfa_required"
+      ? "verify_login"
+      : "form";
+
+  const resetPending = () => {
+    setPendingChallenge(null);
+    setVerificationCode("");
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     setLoading(true);
     try {
-      await login(email, password);
+      const challenge = await login(email, password);
+      setPendingChallenge(challenge);
+      setVerificationCode("");
+      setNotice(challenge.message);
+      setLoading(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);
     }
   };
 
-  const handleDemo = async (role: "patient" | "doctor") => {
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    setDemoLoading(role);
+    setNotice(null);
+    setLoading(true);
     try {
-      await demoLogin(role);
+      const challenge = await register(email, password, fullName, role);
+      setPendingChallenge(challenge);
+      setVerificationCode("");
+      setNotice(challenge.message);
+      setLoading(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Demo login failed");
-      setDemoLoading(null);
+      setError(err instanceof Error ? err.message : "Sign up failed");
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingChallenge) return;
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    try {
+      if (pendingChallenge.status === "verification_required") {
+        const res = await fetch(`${API_BASE_URL}/api/v1/auth/verify-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            email: pendingChallenge.email,
+            code: verificationCode,
+            challenge_id: pendingChallenge.challenge_id,
+          }),
+        });
+        const data = await res.json().catch(() => ({ message: "Verification failed" }));
+        if (!res.ok) throw new Error(data.detail || data.message || "Verification failed");
+        setMode("login");
+        resetPending();
+        setPassword("");
+        setNotice(data.message || "Email verified. Sign in to continue.");
+      } else {
+        await verifyLogin(pendingChallenge.email, verificationCode, pendingChallenge.challenge_id);
+      }
+      setLoading(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+      setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!pendingChallenge?.email) return;
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/resend-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: pendingChallenge.email }),
+      });
+      const data = await res.json().catch(() => ({ message: "Unable to resend code" }));
+      if (!res.ok) throw new Error(data.detail || data.message || "Unable to resend code");
+      setPendingChallenge(data);
+      setVerificationCode("");
+      setNotice(data.message);
+      setLoading(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to resend code");
+      setLoading(false);
     }
   };
 
@@ -245,37 +331,157 @@ export default function Home() {
               <div className="relative z-10">
                 <div className="mb-lg">
                   <h4 className="text-headline-lg text-primary">Portal Login</h4>
-                  <p className="text-body-md text-on-surface-variant mt-1">Select your portal to continue.</p>
+                  <p className="text-body-md text-on-surface-variant mt-1">Sign in or create an account.</p>
                 </div>
 
-                {/* Patient login form */}
-                <div className="mb-md">
-                  <h5 className="text-headline-md text-primary">Patient Login</h5>
-                  <p className="text-sm text-on-surface-variant">Manage your health</p>
+                <div className="mb-md flex gap-sm rounded-xl bg-white/70 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMode("login")}
+                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
+                      mode === "login" ? "bg-primary text-on-primary" : "text-primary"
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("signup")}
+                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
+                      mode === "signup" ? "bg-primary text-on-primary" : "text-primary"
+                    }`}
+                  >
+                    Sign Up
+                  </button>
                 </div>
-                <form onSubmit={handleLogin} className="space-y-md">
-                  <div>
-                    <label className="block text-label-md text-on-surface mb-xs">Email Address</label>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="name@example.com"
-                      required
-                      className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-label-md text-on-surface mb-xs">Password</label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      required
-                      className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md"
-                    />
-                  </div>
+
+                <div className="mb-md">
+                  <h5 className="text-headline-md text-primary">
+                    {authStep === "verify_email"
+                      ? "Verify Your Email"
+                      : authStep === "verify_login"
+                        ? "Confirm Sign In"
+                        : mode === "login"
+                          ? "Account Sign In"
+                          : "Create Account"}
+                  </h5>
+                  <p className="text-sm text-on-surface-variant">
+                    {authStep === "verify_email"
+                      ? "Enter the 6-digit code sent to your inbox."
+                      : authStep === "verify_login"
+                        ? "Enter the one-time sign-in code to finish authentication."
+                        : mode === "login"
+                          ? "Access your portal"
+                          : "New accounts are stored in Supabase users."}
+                  </p>
+                </div>
+
+                <form
+                  onSubmit={
+                    authStep === "verify_email" || authStep === "verify_login"
+                      ? handleVerify
+                      : mode === "login"
+                        ? handleLogin
+                        : handleRegister
+                  }
+                  className="space-y-md"
+                >
+                  {authStep === "form" && mode === "signup" && (
+                    <>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Full Name</label>
+                        <input
+                          type="text"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="Jane Doe"
+                          required
+                          className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Role</label>
+                        <div className="grid grid-cols-2 gap-sm">
+                          <button
+                            type="button"
+                            onClick={() => setRole("patient")}
+                            className={`rounded-xl border px-4 py-3 text-sm font-semibold transition-all ${
+                              role === "patient"
+                                ? "border-primary bg-primary text-on-primary"
+                                : "border-outline-variant bg-white text-primary"
+                            }`}
+                          >
+                            Patient
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRole("doctor")}
+                            className={`rounded-xl border px-4 py-3 text-sm font-semibold transition-all ${
+                              role === "doctor"
+                                ? "border-primary bg-primary text-on-primary"
+                                : "border-outline-variant bg-white text-primary"
+                            }`}
+                          >
+                            Doctor
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {authStep === "form" ? (
+                    <>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Email Address</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="name@example.com"
+                          required
+                          className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Password</label>
+                        <input
+                          type="password"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          required
+                          className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Email Address</label>
+                        <input
+                          type="email"
+                          value={pendingChallenge?.email || email}
+                          disabled
+                          className="w-full px-md py-3 rounded-xl bg-surface-container-low border border-outline-variant text-body-md text-on-surface-variant"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-label-md text-on-surface mb-xs">Verification Code</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]{6}"
+                          value={verificationCode}
+                          onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          placeholder="123456"
+                          required
+                          className="w-full px-md py-3 rounded-xl bg-white border border-outline-variant focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-body-md tracking-[0.3em]"
+                        />
+                      </div>
+                    </>
+                  )}
+                  {notice && (
+                    <p className="text-primary text-sm bg-primary-fixed rounded-xl px-4 py-3">{notice}</p>
+                  )}
                   {error && (
                     <p className="text-error text-sm bg-error-container rounded-xl px-4 py-3">{error}</p>
                   )}
@@ -284,38 +490,47 @@ export default function Home() {
                     disabled={loading}
                     className="w-full py-3 bg-primary text-on-primary rounded-xl font-bold text-label-md hover:scale-[1.01] active:scale-[0.98] transition-all shadow-md disabled:opacity-50"
                   >
-                    {loading ? "Signing in…" : "Patient Sign In"}
+                    {loading
+                      ? authStep === "verify_email"
+                        ? "Verifying…"
+                        : authStep === "verify_login"
+                          ? "Finishing sign in…"
+                          : mode === "login"
+                            ? "Signing in…"
+                            : "Creating account…"
+                      : authStep === "verify_email"
+                        ? "Verify Email"
+                        : authStep === "verify_login"
+                          ? "Finish Sign In"
+                          : mode === "login"
+                            ? "Sign In"
+                            : "Create Account"}
                   </button>
+                  {authStep === "verify_email" && (
+                    <div className="flex gap-sm">
+                      <button
+                        type="button"
+                        onClick={handleResendVerification}
+                        disabled={loading}
+                        className="flex-1 py-3 border border-outline-variant rounded-xl font-semibold text-primary bg-white/60 disabled:opacity-50"
+                      >
+                        Resend Code
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetPending();
+                          setNotice(null);
+                          setError(null);
+                        }}
+                        disabled={loading}
+                        className="flex-1 py-3 border border-outline-variant rounded-xl font-semibold text-on-surface bg-white/60 disabled:opacity-50"
+                      >
+                        Start Over
+                      </button>
+                    </div>
+                  )}
                 </form>
-
-                {/* Provider login */}
-                <div className="mt-xl pt-lg border-t border-outline-variant/30">
-                  <div className="mb-md">
-                    <h5 className="text-headline-md text-primary">Provider Login</h5>
-                    <p className="text-sm text-on-surface-variant">Access clinical tools</p>
-                  </div>
-                  <button
-                    onClick={() => handleDemo("doctor")}
-                    disabled={demoLoading !== null}
-                    className="w-full py-3 border-2 border-secondary text-secondary rounded-xl font-bold text-label-md hover:bg-secondary hover:text-on-secondary transition-all flex items-center justify-center gap-sm disabled:opacity-50"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">medical_services</span>
-                    {demoLoading === "doctor" ? "Loading…" : "Provider Sign In"}
-                  </button>
-                </div>
-
-                {/* Demo / sign up */}
-                <div className="mt-lg text-center">
-                  <p className="text-body-md text-on-surface-variant mb-md">New to careIT?</p>
-                  <button
-                    onClick={() => handleDemo("patient")}
-                    disabled={demoLoading !== null}
-                    className="w-full py-3 border-2 border-primary text-primary rounded-xl font-bold text-label-md hover:bg-primary hover:text-on-primary transition-all disabled:opacity-50"
-                  >
-                    {demoLoading === "patient" ? "Loading…" : "Try Patient Demo"}
-                  </button>
-                  <p className="text-caption text-outline mt-sm">Demo accounts are auto-created on first use.</p>
-                </div>
               </div>
             </div>
           </div>
