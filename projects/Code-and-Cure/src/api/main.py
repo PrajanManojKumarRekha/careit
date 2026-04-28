@@ -3,6 +3,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from src.api.config import ALLOWED_HOSTS, CORS_ORIGINS, JWT_COOKIE_NAME
+from src.api.security import RateLimitMiddleware
 from src.api.jwt_handler import decode_token
 from src.database.db_client import insert_log
 
@@ -20,11 +23,13 @@ app = FastAPI(
 # --- CORS CONFIGURATION ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+app.add_middleware(RateLimitMiddleware)
 
 
 # --- AUDIT LOG MIDDLEWARE ---
@@ -41,10 +46,16 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     user_id = payload.get("user_id")
                 except Exception as exc:
                     logger.debug("Audit middleware: token decode skipped: %s", exc)
+            elif request.cookies.get(JWT_COOKIE_NAME):
+                try:
+                    payload = decode_token(request.cookies[JWT_COOKIE_NAME])
+                    user_id = payload.get("user_id")
+                except Exception as exc:
+                    logger.debug("Audit middleware: cookie token decode skipped: %s", exc)
 
             client_ip = request.client.host if request.client else "unknown"
             action = f"{request.method} {request.url.path}"
-            print(f"[AUDIT] User: {user_id or 'anonymous'} | Action: {action} | IP: {client_ip}")
+            logger.info("[AUDIT] user=%s action=%s ip=%s", user_id or "anonymous", action, client_ip)
 
             # Persist to DB only for authenticated users (logs.user_id is NOT NULL FK)
             if user_id:
@@ -57,12 +68,26 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     )
                 except Exception as exc:
                     # Non-blocking: log failure must not affect business response
-                    print(f"[AUDIT] DB log failed (non-blocking): {exc}")
+                    logger.warning("[AUDIT] DB log failed (non-blocking): %s", exc)
 
         return response
 
 
 app.add_middleware(AuditLogMiddleware)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # --- DB-UNAVAILABLE EXCEPTION HANDLER ---
@@ -84,6 +109,11 @@ async def root():
         "niche": "Solo Practitioners & Individual Doctors",
         "bridge_ready": True,
     }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
 
 
 # --- ROUTER INCLUSIONS ---

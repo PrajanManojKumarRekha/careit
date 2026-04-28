@@ -6,8 +6,21 @@ create table users (
   password_hash text not null,
   full_name text not null,
   role text not null check (role in ('patient', 'doctor', 'admin')),
+  email_verified_at timestamptz,
+  failed_login_attempts integer not null default 0,
+  locked_until timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table auth_challenges (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references users(id) on delete cascade,
+  purpose text not null check (purpose in ('email_verification', 'login_mfa')),
+  code_hash text not null,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
 );
 
 create table doctors (
@@ -153,6 +166,11 @@ create table logs (
 );
 
 create index idx_users_email on users(email);
+create index idx_users_email_verified on users(email_verified_at);
+create index idx_users_locked_until on users(locked_until);
+create index idx_auth_challenges_user on auth_challenges(user_id);
+create index idx_auth_challenges_purpose on auth_challenges(purpose);
+create index idx_auth_challenges_expires_at on auth_challenges(expires_at);
 create index idx_doctors_specialty on doctors(specialty);
 create index idx_doctors_location on doctors(lat, lng);
 create index idx_doctors_rating on doctors(rating);
@@ -173,6 +191,7 @@ create index idx_logs_user on logs(user_id);
 create index idx_logs_created on logs(created_at);
 
 alter table users enable row level security;
+alter table auth_challenges enable row level security;
 alter table doctors enable row level security;
 alter table appointments enable row level security;
 alter table intake_forms enable row level security;
@@ -184,17 +203,18 @@ alter table department_logs enable row level security;
 alter table soap_note_versions enable row level security;
 alter table logs enable row level security;
 
-create policy users_dev_all on users for all using (true) with check (true);
-create policy doctors_dev_all on doctors for all using (true) with check (true);
-create policy appointments_dev_all on appointments for all using (true) with check (true);
-create policy intake_forms_dev_all on intake_forms for all using (true) with check (true);
-create policy soap_notes_dev_all on soap_notes for all using (true) with check (true);
-create policy fhir_records_dev_all on fhir_records for all using (true) with check (true);
-create policy medication_policies_dev_all on medication_policies for all using (true) with check (true);
-create policy prescriptions_dev_all on prescriptions for all using (true) with check (true);
-create policy department_logs_dev_all on department_logs for all using (true) with check (true);
-create policy soap_note_versions_dev_all on soap_note_versions for all using (true) with check (true);
-create policy logs_dev_all on logs for all using (true) with check (true);
+create policy users_service_role_only on users for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy auth_challenges_service_role_only on auth_challenges for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy doctors_service_role_only on doctors for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy appointments_service_role_only on appointments for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy intake_forms_service_role_only on intake_forms for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy soap_notes_service_role_only on soap_notes for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy fhir_records_service_role_only on fhir_records for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy medication_policies_service_role_only on medication_policies for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy prescriptions_service_role_only on prescriptions for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy department_logs_service_role_only on department_logs for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy soap_note_versions_service_role_only on soap_note_versions for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy logs_service_role_only on logs for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 
 create or replace function track_soap_note_updates()
 returns trigger

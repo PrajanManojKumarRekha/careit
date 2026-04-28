@@ -26,6 +26,7 @@ from src.api.models import (
     TranscribeUploadResponse,
 )
 from src.api.dependencies import require_role, get_current_user
+from src.api.config import ALLOW_DEMO_MODE
 from src.core_logic.soap_parser import parse_transcript_to_soap
 from src.core_logic.stream_session import (
     ConsultationSession,
@@ -44,6 +45,7 @@ from src.core_logic.transcriber import (
 from src.core_logic.models import SoapNote as CoreSoapNote
 from src.core_logic.soap_pdf import render_soap_note_pdf_bytes
 from src.database.db_client import (
+    doctor_owns_appointment,
     insert_soap_note,
     approve_soap_note,
     update_soap_note_content,
@@ -60,6 +62,8 @@ def _require_doctor_appointment_access(current_user: dict, appointment_id: str) 
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
+    if not doctor_owns_appointment(doctor["id"], appointment_id) and not ALLOW_DEMO_MODE:
+        raise HTTPException(status_code=403, detail="You can only access SOAP records for your own appointments.")
     return doctor
 
 
@@ -309,6 +313,7 @@ async def start_session(
     The provider_mode field tells the client whether a real ASR backend is
     active ('asr') or whether manual text input is required ('fallback').
     """
+    _require_doctor_appointment_access(current_user, request.appointment_id)
     _evict_stale_sessions()
     provider = build_provider()
     session_id = str(uuid.uuid4())
@@ -340,7 +345,11 @@ async def start_session(
     response_model=SessionChunkResponse,
     dependencies=[Depends(require_role("doctor"))],
 )
-async def ingest_chunk(session_id: str, request: SessionChunkRequest):
+async def ingest_chunk(
+    session_id: str,
+    request: SessionChunkRequest,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Doctor-only. Ingest the next transcript chunk for a live session.
 
@@ -354,6 +363,9 @@ async def ingest_chunk(session_id: str, request: SessionChunkRequest):
     When ASR keys are configured, this field carries an audio reference (future).
     """
     session = _get_session(session_id)
+    _require_doctor_appointment_access(current_user, session.appointment_id)
+    if request.appointment_id != session.appointment_id:
+        raise HTTPException(status_code=409, detail="APPOINTMENT_MISMATCH: request appointment does not match session.")
 
     provider = build_provider()
     raw_text, provider_status = provider.process_chunk(
@@ -393,7 +405,10 @@ async def ingest_chunk(session_id: str, request: SessionChunkRequest):
     response_model=SessionStateResponse,
     dependencies=[Depends(require_role("doctor"))],
 )
-async def get_session_state(session_id: str):
+async def get_session_state(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Doctor-only. Poll the current state of a consultation session.
 
@@ -401,6 +416,7 @@ async def get_session_state(session_id: str):
     Returns the full current transcript and latest SOAP draft.
     """
     session = _get_session(session_id)
+    _require_doctor_appointment_access(current_user, session.appointment_id)
 
     return SessionStateResponse(
         session_id=session_id,
@@ -601,6 +617,7 @@ async def approve_soap_note_route(
     Persists the final edited SOAP note (insert if first save, update if draft exists),
     then marks it approved. Returns note_id for downstream FHIR export.
     """
+    _require_doctor_appointment_access(current_user, request.appointment_id)
     doctor_user_id = current_user["user_id"]
     note = request.edited_note
 
