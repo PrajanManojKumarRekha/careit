@@ -6,17 +6,6 @@ We want to be upfront about what this is: CareIT is **not** an EMR, and it is **
 
 ---
 
-## Team
-
-| Name | GitHub |
-|---|---|
-| Prajan Manoj Kumar Rekha | `PrajanManojKumarRekha` |
-| Eric Cariaga | `eCarCodes` |
-| Jessica C O'Bonna | `jessic-o` |
-| Shayan Ali | `CodewithShayan456` |
-
----
-
 ## The Problem
 
 Independent practitioners and small clinics live in a fragmented stack. Scheduling lives in one tool, transcription in another, charting somewhere else, and the EMR rarely talks cleanly to any of them. Three things fall out of that:
@@ -29,7 +18,7 @@ We picked this because every member of the team has either worked in or alongsid
 
 ---
 
-## What We Built
+## What has been Built
 
 A workflow that runs end-to-end, from a patient typing symptoms to a FHIR R4 bundle that an EMR could ingest. There are five moving pieces:
 
