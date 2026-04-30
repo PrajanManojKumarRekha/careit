@@ -104,7 +104,6 @@ The reason `core_logic` is pure Python with no framework dependencies is so we c
 | FHIR R4 bundle generation | ✅ Implemented |
 | Internal audit data model (`department_logs`, versioning) | ✅ Schema-level |
 | Real-time speech translation/transcription | 🟡 In progress |
-| Live production EMR vendor endpoint push | ⏸️ Deferred |
 
 ---
 
@@ -115,6 +114,8 @@ The reason `core_logic` is pure Python with no framework dependencies is so we c
 - **Core Logic:** Python 3.12+ (`dataclasses`, deterministic processing)
 - **Database:** Supabase (PostgreSQL)
 - **Interoperability:** FHIR R4 JSON Bundle
+- **Authentication** Clerk
+
 
 ---
 
@@ -173,6 +174,7 @@ SMTP_USERNAME=<smtp_username>
 SMTP_PASSWORD=<smtp_password>
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ALLOW_ONEDRIVE_DOTENV=true
+ELEVENLABS_API_KEY=<your_elevenlabs_api_key>  # optional, used for speech-to-text fallback
 ```
 
 `NEXT_PUBLIC_API_BASE_URL` is the frontend variable the app reads for auth and API requests. The frontend also accepts `NEXT_PUBLIC_API_URL` as a compatibility fallback, but `NEXT_PUBLIC_API_BASE_URL` should be treated as canonical.

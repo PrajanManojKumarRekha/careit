@@ -9,13 +9,7 @@ from src.api.config import ALLOW_DOTENV, ALLOW_ONEDRIVE_DOTENV, IS_PRODUCTION
 
 env_path = Path.cwd() / ".env"
 if ALLOW_DOTENV:
-    if "onedrive" in str(env_path).lower() and not ALLOW_ONEDRIVE_DOTENV:
-        print(
-            "[SECURITY] Skipping local .env from OneDrive-synced path. "
-            "Set machine-level environment variables or ALLOW_ONEDRIVE_DOTENV=true for local-only development."
-        )
-    else:
-        load_dotenv()
+    load_dotenv(env_path)
 elif IS_PRODUCTION and (Path.cwd() / ".env").exists():
     print(
         "[SECURITY] Ignoring local .env in production. "
@@ -32,6 +26,7 @@ def _read_env(name: str) -> str | None:
 
 SUPABASE_URL = _read_env("SUPABASE_URL")
 SUPABASE_KEY = _read_env("SUPABASE_KEY")
+CLERK_PASSWORD_SENTINEL = "CLERK_MANAGED_AUTH"
 
 class _UnavailableDB:
     """Sentinel client used when Supabase credentials are absent at startup.
@@ -67,18 +62,56 @@ def _first_or_none(data: Any) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def get_user_by_email(email: str) -> dict | None:
-    res = (
-        supabase.table("users")
-        .select(
-            "id,email,password_hash,full_name,role,email_verified_at,failed_login_attempts,"
-            "locked_until,created_at,updated_at"
-        )
-        .eq("email", email)
-        .limit(1)
-        .execute()
+def _select_user_columns() -> str:
+    return (
+        "id,clerk_user_id,email,password_hash,full_name,role,email_verified_at,failed_login_attempts,"
+        "locked_until,created_at,updated_at"
     )
-    return _first_or_none(res.data)
+
+
+def _select_user_columns_legacy() -> str:
+    return "id,email,password_hash,full_name,role,created_at,updated_at"
+
+
+def _is_missing_column_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "column" in message and "does not exist" in message
+
+
+def _select_user_single(filter_column: str, filter_value: str) -> dict | None:
+    try:
+        res = (
+            supabase.table("users")
+            .select(_select_user_columns())
+            .eq(filter_column, filter_value)
+            .limit(1)
+            .execute()
+        )
+        return _first_or_none(res.data)
+    except Exception as exc:
+        if not _is_missing_column_error(exc):
+            raise
+        if filter_column == "clerk_user_id":
+            return None
+        legacy_res = (
+            supabase.table("users")
+            .select(_select_user_columns_legacy())
+            .eq(filter_column, filter_value)
+            .limit(1)
+            .execute()
+        )
+        row = _first_or_none(legacy_res.data)
+        if not row:
+            return None
+        row.setdefault("clerk_user_id", None)
+        row.setdefault("email_verified_at", None)
+        row.setdefault("failed_login_attempts", 0)
+        row.setdefault("locked_until", None)
+        return row
+
+
+def get_user_by_email(email: str) -> dict | None:
+    return _select_user_single("email", email)
 
 
 def insert_user(email: str, password_hash: str, full_name: str, role: str) -> dict:
@@ -98,18 +131,12 @@ def insert_user(email: str, password_hash: str, full_name: str, role: str) -> di
     return _first_or_none(res.data) or {}
 
 
+def get_user_by_clerk_user_id(clerk_user_id: str) -> dict | None:
+    return _select_user_single("clerk_user_id", clerk_user_id)
+
+
 def get_user_by_id(user_id: str) -> dict | None:
-    res = (
-        supabase.table("users")
-        .select(
-            "id,email,password_hash,full_name,role,email_verified_at,failed_login_attempts,"
-            "locked_until,created_at,updated_at"
-        )
-        .eq("id", user_id)
-        .limit(1)
-        .execute()
-    )
-    return _first_or_none(res.data)
+    return _select_user_single("id", user_id)
 
 
 def update_user_auth_state(user_id: str, **fields: Any) -> dict:
@@ -121,6 +148,105 @@ def update_user_auth_state(user_id: str, **fields: Any) -> dict:
         .execute()
     )
     return _first_or_none(res.data) or {}
+
+
+def upsert_clerk_user(
+    *,
+    clerk_user_id: str,
+    email: str,
+    full_name: str,
+    role: str,
+    email_verified_at: str | None,
+) -> dict:
+    existing = get_user_by_clerk_user_id(clerk_user_id)
+    payload: dict[str, Any] = {
+        "clerk_user_id": clerk_user_id,
+        "email": email,
+        "full_name": full_name,
+        "role": role,
+        "email_verified_at": email_verified_at,
+    }
+    if existing:
+        try:
+            res = (
+                supabase.table("users")
+                .update(payload)
+                .eq("id", existing["id"])
+                .execute()
+            )
+            return _first_or_none(res.data) or existing
+        except Exception as exc:
+            if not _is_missing_column_error(exc):
+                raise
+            legacy_payload = {
+                "email": email,
+                "full_name": full_name,
+                "role": role,
+            }
+            res = (
+                supabase.table("users")
+                .update(legacy_payload)
+                .eq("id", existing["id"])
+                .execute()
+            )
+            updated = _first_or_none(res.data) or existing
+            updated["clerk_user_id"] = clerk_user_id
+            updated["email_verified_at"] = email_verified_at
+            return updated
+
+    by_email = get_user_by_email(email)
+    insert_payload = {
+        **payload,
+        "password_hash": CLERK_PASSWORD_SENTINEL,
+        "failed_login_attempts": 0,
+    }
+    if by_email:
+        try:
+            res = (
+                supabase.table("users")
+                .update(insert_payload)
+                .eq("id", by_email["id"])
+                .execute()
+            )
+            return _first_or_none(res.data) or by_email
+        except Exception as exc:
+            if not _is_missing_column_error(exc):
+                raise
+            legacy_payload = {
+                "email": email,
+                "password_hash": CLERK_PASSWORD_SENTINEL,
+                "full_name": full_name,
+                "role": role,
+            }
+            res = (
+                supabase.table("users")
+                .update(legacy_payload)
+                .eq("id", by_email["id"])
+                .execute()
+            )
+            updated = _first_or_none(res.data) or by_email
+            updated["clerk_user_id"] = clerk_user_id
+            updated["email_verified_at"] = email_verified_at
+            return updated
+
+    try:
+        res = supabase.table("users").insert(insert_payload).execute()
+        return _first_or_none(res.data) or {}
+    except Exception as exc:
+        if not _is_missing_column_error(exc):
+            raise
+        legacy_insert_payload = {
+            "email": email,
+            "password_hash": CLERK_PASSWORD_SENTINEL,
+            "full_name": full_name,
+            "role": role,
+        }
+        res = supabase.table("users").insert(legacy_insert_payload).execute()
+        inserted = _first_or_none(res.data) or {}
+        if inserted:
+            inserted["clerk_user_id"] = clerk_user_id
+            inserted["email_verified_at"] = email_verified_at
+        return inserted
 
 
 def insert_auth_challenge(

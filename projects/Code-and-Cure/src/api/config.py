@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -14,6 +17,22 @@ def _env_list(name: str, default: list[str]) -> list[str]:
         return default
     return [item.strip() for item in raw.split(",") if item.strip()]
 
+
+def _raw_env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+_initial_app_env = os.getenv("APP_ENV", "development").strip().lower()
+_initial_is_production = _initial_app_env == "production"
+_initial_allow_dotenv = _raw_env_flag("ALLOW_DOTENV", default=not _initial_is_production)
+_project_root = Path(__file__).resolve().parents[2]
+_env_path = _project_root / ".env"
+
+if _initial_allow_dotenv:
+    load_dotenv(_env_path)
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 IS_PRODUCTION = APP_ENV == "production"
@@ -56,6 +75,17 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_USE_TLS = _env_flag("SMTP_USE_TLS", default=True)
 SMTP_USE_SSL = _env_flag("SMTP_USE_SSL", default=False)
 
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
+CLERK_PUBLISHABLE_KEY = os.getenv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "").strip()
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "").strip()
+CLERK_JWT_ISSUER = os.getenv("CLERK_JWT_ISSUER", "").strip()
+CLERK_JWT_AUDIENCE = os.getenv("CLERK_JWT_AUDIENCE", "").strip()
+CLERK_API_URL = os.getenv("CLERK_API_URL", "https://api.clerk.com").strip()
+CLERK_TOKEN_TEMPLATE = os.getenv("CLERK_TOKEN_TEMPLATE", "careit-api").strip() or "careit-api"
+
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "120"))
 RATE_LIMIT_AUTH_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_AUTH_MAX_REQUESTS", "10"))
+RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS", "5"))
+TRANSCRIPTION_MAX_CONCURRENCY = int(os.getenv("TRANSCRIPTION_MAX_CONCURRENCY", "2"))
+TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS = float(os.getenv("TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS", "1.5"))
