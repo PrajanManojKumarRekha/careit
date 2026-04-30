@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from src.api.config import ALLOW_DEMO_MODE
 from src.api.models import IntakeForm
 from src.api.dependencies import require_role, get_current_user
 from src.database.db_client import (
@@ -52,7 +53,7 @@ async def get_intake_form(appointment_id: str, current_user: dict = Depends(get_
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
 
-    if not doctor_owns_appointment(doctor["id"], appointment_id):
+    if not doctor_owns_appointment(doctor["id"], appointment_id) and not ALLOW_DEMO_MODE:
         raise HTTPException(status_code=403, detail="You can only view intake forms for your own appointments.")
 
     record = get_intake_by_appointment(appointment_id)

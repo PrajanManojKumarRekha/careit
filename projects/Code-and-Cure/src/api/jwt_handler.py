@@ -4,9 +4,10 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from jose import JWTError, jwt
 
+from src.api.config import JWT_SECRET_KEY
 from src.api.clerk_auth import resolve_authenticated_user
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
+SECRET_KEY = JWT_SECRET_KEY
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
 ISSUER = os.getenv("JWT_ISSUER", "careit-api")

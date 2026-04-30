@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Depends
 from src.api.models import EHRExportResponse, EMRHandoffResponse
+from src.api.config import ALLOW_DEMO_MODE
 from src.api.dependencies import require_role, get_current_user
 from src.core_logic.fhir_builder import build_fhir_bundle
 from src.core_logic.models import SoapNote as CoreSoapNote
@@ -28,7 +29,7 @@ async def export_to_emr(appointment_id: str, current_user: dict = Depends(get_cu
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
-    if not doctor_owns_appointment(doctor["id"], appointment_id):
+    if not ALLOW_DEMO_MODE and not doctor_owns_appointment(doctor["id"], appointment_id):
         raise HTTPException(status_code=403, detail="You can only export records for your own appointments.")
 
     """
@@ -100,7 +101,7 @@ async def submit_to_emr(appointment_id: str, current_user: dict = Depends(get_cu
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
-    if not doctor_owns_appointment(doctor["id"], appointment_id):
+    if not ALLOW_DEMO_MODE and not doctor_owns_appointment(doctor["id"], appointment_id):
         raise HTTPException(status_code=403, detail="You can only submit records for your own appointments.")
 
     """

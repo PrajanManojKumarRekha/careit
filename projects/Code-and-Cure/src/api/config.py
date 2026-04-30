@@ -25,6 +25,28 @@ def _raw_env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _looks_placeholder(value: str) -> bool:
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return True
+    placeholder_tokens = (
+        "replace-with",
+        "replace_me",
+        "your-project",
+        "your-clerk-domain",
+        "your-api.example.com",
+        "example.com",
+    )
+    return any(token in cleaned for token in placeholder_tokens)
+
+
+def _all_local_hosts(values: list[str]) -> bool:
+    if not values:
+        return False
+    local_tokens = ("localhost", "127.0.0.1")
+    return all(any(token in value.lower() for token in local_tokens) for value in values)
+
+
 _initial_app_env = os.getenv("APP_ENV", "development").strip().lower()
 _initial_is_production = _initial_app_env == "production"
 _initial_allow_dotenv = _raw_env_flag("ALLOW_DOTENV", default=not _initial_is_production)
@@ -46,12 +68,17 @@ CORS_ORIGINS = _env_list(
     "CORS_ORIGINS",
     ["http://localhost:3000", "http://127.0.0.1:3000"],
 )
+CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", "").strip() or None
 
 ALLOWED_HOSTS = _env_list(
     "ALLOWED_HOSTS",
     ["localhost", "127.0.0.1", "*.vercel.app"],
 )
 
+_configured_jwt_secret = os.getenv("JWT_SECRET_KEY", "").strip()
+JWT_SECRET_KEY = _configured_jwt_secret or (
+    "careit-demo-dev-secret" if ALLOW_DEMO_MODE and not IS_PRODUCTION else ""
+)
 JWT_COOKIE_NAME = os.getenv("JWT_COOKIE_NAME", "careit_access_token")
 JWT_COOKIE_SECURE = _env_flag("JWT_COOKIE_SECURE", default=IS_PRODUCTION)
 JWT_COOKIE_SAMESITE = os.getenv(
@@ -89,3 +116,41 @@ RATE_LIMIT_AUTH_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_AUTH_MAX_REQUESTS", "10
 RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS", "5"))
 TRANSCRIPTION_MAX_CONCURRENCY = int(os.getenv("TRANSCRIPTION_MAX_CONCURRENCY", "2"))
 TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS = float(os.getenv("TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS", "1.5"))
+
+
+def validate_runtime_config() -> None:
+    if JWT_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+        raise RuntimeError("JWT_COOKIE_SAMESITE must be one of: lax, strict, none.")
+    if JWT_COOKIE_SAMESITE == "none" and not JWT_COOKIE_SECURE:
+        raise RuntimeError("JWT_COOKIE_SECURE must be true when JWT_COOKIE_SAMESITE is 'none'.")
+
+    if not IS_PRODUCTION:
+        return
+
+    production_errors: list[str] = []
+
+    required_env = {
+        "SUPABASE_URL": os.getenv("SUPABASE_URL", "").strip(),
+        "SUPABASE_KEY": os.getenv("SUPABASE_KEY", "").strip(),
+        "CLERK_SECRET_KEY": CLERK_SECRET_KEY,
+        "CLERK_JWKS_URL": CLERK_JWKS_URL,
+        "CLERK_JWT_ISSUER": CLERK_JWT_ISSUER,
+    }
+    if ALLOW_DEMO_MODE:
+        required_env["JWT_SECRET_KEY"] = _configured_jwt_secret
+
+    for name, value in required_env.items():
+        if _looks_placeholder(value):
+            production_errors.append(f"{name} must be set to a real production value.")
+
+    if not CORS_ORIGINS and not CORS_ORIGIN_REGEX:
+        production_errors.append("Set CORS_ORIGINS and/or CORS_ORIGIN_REGEX for production.")
+    if CORS_ORIGINS and _all_local_hosts(CORS_ORIGINS) and not CORS_ORIGIN_REGEX:
+        production_errors.append(
+            "CORS_ORIGINS only contains localhost/127.0.0.1 values. Add your Vercel domain or CORS_ORIGIN_REGEX."
+        )
+    if not ALLOWED_HOSTS or _all_local_hosts(ALLOWED_HOSTS):
+        production_errors.append("ALLOWED_HOSTS must include your Render hostname and any custom API domain.")
+
+    if production_errors:
+        raise RuntimeError("Invalid production configuration: " + " ".join(production_errors))

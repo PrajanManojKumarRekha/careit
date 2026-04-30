@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, Depends, Query
 
-from src.api.dependencies import require_role
+from src.api.dependencies import get_current_user, require_role
 from src.api.models import AppointmentSlot, Doctor
 from src.database.db_client import get_doctors
 
@@ -326,6 +326,7 @@ async def list_doctors(
         "auto",
         description="Doctor data source: auto|db|live|embedded. 'auto' tries embedded first then OSM.",
     ),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Doctor Discovery. Returns doctors from embedded nationwide pool, DB, or live OSM data.

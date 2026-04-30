@@ -1,12 +1,28 @@
 function resolveApiBaseUrl(): string {
-  const configuredBase =
+  const configuredBase = (
     process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "http://localhost:8000";
-  return configuredBase.trim().replace(/\/$/, "");
+    ""
+  ).trim();
+
+  if (configuredBase) {
+    return configuredBase
+      .replace("http://localhost:8000", "http://127.0.0.1:8000")
+      .replace("https://localhost:8000", "https://127.0.0.1:8000")
+      .replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    const localHosts = new Set(["localhost", "127.0.0.1"]);
+    const host = localHosts.has(window.location.hostname) ? "127.0.0.1" : window.location.hostname;
+    return `${window.location.protocol}//${host}:8000`;
+  }
+
+  return "http://127.0.0.1:8000";
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
+const BROWSER_TOKEN_KEY = "careit_access_token";
 
 type AccessTokenProvider = () => Promise<string | null> | string | null;
 
@@ -33,6 +49,13 @@ export async function getStoredToken(): Promise<string | null> {
       if (attempt < 4) {
         await sleep(150);
       }
+    }
+  }
+  if (typeof window !== "undefined") {
+    const persisted = window.localStorage.getItem(BROWSER_TOKEN_KEY)?.trim() || null;
+    if (persisted) {
+      storedAccessToken = persisted;
+      return persisted;
     }
   }
   return storedAccessToken;
@@ -124,14 +147,25 @@ async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
 
 export function setStoredToken(token: string | null) {
   storedAccessToken = token?.trim() || null;
+  if (typeof window !== "undefined") {
+    if (storedAccessToken) {
+      window.localStorage.setItem(BROWSER_TOKEN_KEY, storedAccessToken);
+    } else {
+      window.localStorage.removeItem(BROWSER_TOKEN_KEY);
+    }
+  }
 }
 
 export function clearStoredToken() {
   storedAccessToken = null;
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(BROWSER_TOKEN_KEY);
+  }
 }
 
 // ---- Types ----
 export interface AuthResponse {
+  access_token?: string | null;
   status?: string;
   user_id?: string;
   role: string;
@@ -331,6 +365,11 @@ export const api = {
       apiFetch<{ status: string }>("/api/v1/auth/logout", {
         method: "POST",
         body: JSON.stringify({}),
+      }),
+    demoLogin: (role: "patient" | "doctor") =>
+      apiFetch<AuthResponse>("/api/v1/auth/demo-login", {
+        method: "POST",
+        body: JSON.stringify({ role }),
       }),
   },
 

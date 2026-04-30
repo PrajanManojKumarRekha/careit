@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from src.api.config import ALLOWED_HOSTS, CORS_ORIGINS, JWT_COOKIE_NAME
+from src.api.config import ALLOWED_HOSTS, CORS_ORIGINS, CORS_ORIGIN_REGEX, JWT_COOKIE_NAME, validate_runtime_config
 from src.api.security import RateLimitMiddleware
 from src.api.jwt_handler import decode_token
 from src.database.db_client import insert_log
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Import routes
 from src.api.routes import auth, symptoms, doctors, appointments, intake, soap, fhir, prescriptions
+
+validate_runtime_config()
 
 app = FastAPI(
     title="CareIT Telehealth API",
@@ -24,6 +26,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
