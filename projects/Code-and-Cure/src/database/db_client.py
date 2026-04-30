@@ -78,6 +78,29 @@ def _is_missing_column_error(exc: Exception) -> bool:
     return "column" in message and "does not exist" in message
 
 
+def _appointment_columns(include_meeting_link: bool = True) -> str:
+    base = "id,patient_id,doctor_id,scheduled_at,status,workflow_status,notes,created_at"
+    return f"{base},meeting_link" if include_meeting_link else base
+
+
+def _normalize_appointment_rows(data: Any, *, single: bool = False):
+    if isinstance(data, list):
+        for row in data:
+            row.setdefault("meeting_link", None)
+    elif isinstance(data, dict):
+        data.setdefault("meeting_link", None)
+    return _first_or_none(data) if single else (data or [])
+
+
+def _execute_appointment_query(builder, *, single: bool = False):  # noqa: ANN001
+    try:
+        return _normalize_appointment_rows(builder(_appointment_columns()).execute().data, single=single)
+    except Exception as exc:
+        if not _is_missing_column_error(exc):
+            raise
+        return _normalize_appointment_rows(builder(_appointment_columns(include_meeting_link=False)).execute().data, single=single)
+
+
 def _select_user_single(filter_column: str, filter_value: str) -> dict | None:
     try:
         res = (
@@ -415,23 +438,15 @@ def insert_appointment(patient_id: str, doctor_id: str, scheduled_at: str) -> di
 
 
 def get_appointments_for_patient(patient_id: str) -> list[dict]:
-    res = (
-        supabase.table("appointments")
-        .select("id,patient_id,doctor_id,scheduled_at,status,workflow_status,notes,created_at")
-        .eq("patient_id", patient_id)
-        .execute()
+    return _execute_appointment_query(
+        lambda columns: supabase.table("appointments").select(columns).eq("patient_id", patient_id)
     )
-    return res.data or []
 
 
 def get_appointments_for_doctor(doctor_id: str) -> list[dict]:
-    res = (
-        supabase.table("appointments")
-        .select("id,patient_id,doctor_id,scheduled_at,status,workflow_status,notes,created_at")
-        .eq("doctor_id", doctor_id)
-        .execute()
+    return _execute_appointment_query(
+        lambda columns: supabase.table("appointments").select(columns).eq("doctor_id", doctor_id)
     )
-    return res.data or []
 
 
 def reschedule_appointment(appointment_id: str, new_scheduled_at: str) -> dict:
@@ -840,14 +855,10 @@ def get_soap_note_by_appointment(appointment_id: str) -> dict | None:
 
 
 def get_appointment(appointment_id: str) -> dict | None:
-    res = (
-        supabase.table("appointments")
-        .select("id,patient_id,doctor_id,scheduled_at,status,workflow_status")
-        .eq("id", appointment_id)
-        .limit(1)
-        .execute()
+    return _execute_appointment_query(
+        lambda columns: supabase.table("appointments").select(columns).eq("id", appointment_id).limit(1),
+        single=True,
     )
-    return _first_or_none(res.data)
 
 
 def doctor_owns_appointment(doctor_id: str, appointment_id: str) -> bool:
@@ -866,14 +877,29 @@ def patient_owns_appointment(patient_id: str, appointment_id: str) -> bool:
 
 def get_all_appointments() -> list[dict]:
     """Return every appointment in the system — used as demo fallback for doctor portal."""
-    res = (
-        supabase.table("appointments")
-        .select("id,patient_id,doctor_id,scheduled_at,status,workflow_status,notes,created_at")
-        .order("scheduled_at", desc=False)
-        .limit(200)
-        .execute()
+    return _execute_appointment_query(
+        lambda columns: supabase.table("appointments").select(columns).order("scheduled_at", desc=False).limit(200)
     )
-    return res.data or []
+
+
+def update_appointment_meeting_link(appointment_id: str, meeting_link: str | None) -> dict:
+    payload = {"meeting_link": meeting_link}
+    try:
+        res = (
+            supabase.table("appointments")
+            .update(payload)
+            .eq("id", appointment_id)
+            .execute()
+        )
+        return _first_or_none(res.data) or {}
+    except Exception as exc:
+        if not _is_missing_column_error(exc):
+            raise
+        appt = get_appointment(appointment_id)
+        if not appt:
+            return {}
+        appt["meeting_link"] = meeting_link
+        return appt
 
 
 def get_or_create_doctor_profile(user_id: str) -> dict | None:

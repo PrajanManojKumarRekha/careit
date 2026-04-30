@@ -1,17 +1,20 @@
 import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Depends
-from src.api.models import BookingRequest, RescheduleRequest
+from src.api.models import BookingRequest, RescheduleRequest, AppointmentMeetingLinkUpdate
 from src.api.config import ALLOW_DEMO_MODE
 from src.api.dependencies import require_role, get_current_user
 from src.database.db_client import (
     insert_appointment,
+    get_appointment,
     get_appointments_for_patient,
     get_appointments_for_doctor,
     get_or_create_doctor_profile,
     update_appointment_status,
+    update_appointment_meeting_link,
     reschedule_appointment,
     patient_owns_appointment,
+    doctor_owns_appointment,
 )
 
 router = APIRouter()
@@ -79,6 +82,54 @@ async def get_appointments(current_user: dict = Depends(get_current_user)):
         status_code=403,
         detail=f"Role '{role}' is not permitted to access appointments.",
     )
+
+
+@router.get("/{appointment_id}")
+async def get_appointment_detail(appointment_id: str, current_user: dict = Depends(get_current_user)):
+    if not _is_valid_uuid(appointment_id):
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+
+    appointment = get_appointment(appointment_id)
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+
+    role = current_user["role"]
+    user_id = current_user["user_id"]
+    if role == "patient" and appointment.get("patient_id") != user_id:
+        raise HTTPException(status_code=403, detail="You can only view your own appointments.")
+    if role == "doctor":
+        doctor = get_or_create_doctor_profile(user_id)
+        if not doctor or not doctor_owns_appointment(doctor["id"], appointment_id):
+            raise HTTPException(status_code=403, detail="You can only view your own appointments.")
+    if role not in {"patient", "doctor"}:
+        raise HTTPException(status_code=403, detail="Role is not permitted to access appointments.")
+
+    return appointment
+
+
+@router.patch("/{appointment_id}/meeting-link", dependencies=[Depends(require_role("doctor"))])
+async def update_meeting_link(
+    appointment_id: str,
+    body: AppointmentMeetingLinkUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    if not _is_valid_uuid(appointment_id):
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+
+    doctor = get_or_create_doctor_profile(current_user["user_id"])
+    if not doctor or not doctor_owns_appointment(doctor["id"], appointment_id):
+        raise HTTPException(status_code=403, detail="You can only edit meeting links for your own appointments.")
+
+    row = update_appointment_meeting_link(appointment_id, body.meeting_link)
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to update meeting link.")
+
+    return {
+        "appointment_id": appointment_id,
+        "meeting_link": row.get("meeting_link"),
+        "message": "Meeting link updated.",
+        "booking": row,
+    }
 
 
 @router.patch("/{appointment_id}/cancel", dependencies=[Depends(require_role("patient"))])

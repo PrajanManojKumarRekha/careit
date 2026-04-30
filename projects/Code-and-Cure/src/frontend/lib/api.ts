@@ -165,6 +165,9 @@ export interface Appointment {
   doctor_id: string;
   scheduled_at: string;
   status: string;
+  workflow_status?: string;
+  notes?: string | null;
+  meeting_link?: string | null;
 }
 
 export interface TriageResponse {
@@ -379,6 +382,8 @@ export const api = {
         }
       ),
     list: () => apiFetch<Appointment[]>("/api/v1/appointments/"),
+    get: (appointment_id: string) =>
+      apiFetch<Appointment>(`/api/v1/appointments/${appointment_id}`),
     cancel: (appointment_id: string) =>
       apiFetch<{ appointment_id: string; status: string; message: string }>(
         `/api/v1/appointments/${appointment_id}/cancel`,
@@ -390,6 +395,14 @@ export const api = {
         {
           method: "PATCH",
           body: JSON.stringify({ new_scheduled_at }),
+        }
+      ),
+    updateMeetingLink: (appointment_id: string, meeting_link: string | null) =>
+      apiFetch<{ appointment_id: string; meeting_link: string | null; message: string; booking: Appointment }>(
+        `/api/v1/appointments/${appointment_id}/meeting-link`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ meeting_link }),
         }
       ),
   },
