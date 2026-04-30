@@ -5,6 +5,7 @@ import { useState, useRef, Suspense, useCallback, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   api,
+  Appointment,
   SOAPDraftWithMeta,
   EMRHandoffResponse,
   EHRExportResponse,
@@ -43,6 +44,12 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
 
   const [stage, setStage]         = useState<Stage>("upload");
   const [inputMode, setInputMode] = useState<InputMode>("video");
+  const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [appointmentLoading, setAppointmentLoading] = useState(true);
+  const [appointmentError, setAppointmentError] = useState<string | null>(null);
+  const [meetingLinkDraft, setMeetingLinkDraft] = useState("");
+  const [meetingLinkSaving, setMeetingLinkSaving] = useState(false);
+  const [meetingLinkMessage, setMeetingLinkMessage] = useState<string | null>(null);
 
   const [dragOver, setDragOver]         = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -77,6 +84,31 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
   const [docUploadFile, setDocUploadFile] = useState<File | null>(null);
   const [docEmail, setDocEmail]           = useState("");
   const [docActionMsg, setDocActionMsg]   = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAppointmentLoading(true);
+    setAppointmentError(null);
+
+    api.appointments
+      .get(appointmentId)
+      .then((row) => {
+        if (cancelled) return;
+        setAppointment(row);
+        setMeetingLinkDraft(row.meeting_link || "");
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setAppointmentError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setAppointmentLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appointmentId]);
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -246,6 +278,23 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
     setDocActionMsg(`${res.message} (${res.target_email})`);
   };
 
+  const saveMeetingLink = async () => {
+    setMeetingLinkSaving(true);
+    setMeetingLinkMessage(null);
+    setAppointmentError(null);
+    try {
+      const normalized = meetingLinkDraft.trim() || null;
+      const res = await api.appointments.updateMeetingLink(appointmentId, normalized);
+      setAppointment(res.booking);
+      setMeetingLinkDraft(res.booking.meeting_link || "");
+      setMeetingLinkMessage(normalized ? "Patient join link saved." : "Patient join link cleared.");
+    } catch (e: unknown) {
+      setAppointmentError(e instanceof Error ? e.message : "Failed to save meeting link");
+    } finally {
+      setMeetingLinkSaving(false);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Progress steps
   // ---------------------------------------------------------------------------
@@ -280,6 +329,51 @@ function ConsultationWorkflow({ appointmentId }: { appointmentId: string }) {
           <p className="text-caption text-outline font-mono truncate">{appointmentId}</p>
         </div>
         <StagePill stage={stage} />
+      </div>
+
+      <div className="glass-card rounded-2xl p-md shadow-sm space-y-sm">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-label-md text-on-surface font-semibold">Patient Join Link</h3>
+            <p className="text-caption text-outline">
+              This is attached to appointment <span className="font-mono text-on-surface">{appointmentId}</span> and appears in that patient&apos;s consultation portal only.
+            </p>
+          </div>
+          {appointment && (
+            <span className="text-caption font-bold px-3 py-1 rounded-full bg-primary-fixed text-primary capitalize">
+              {appointment.status}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            value={meetingLinkDraft}
+            onChange={(e) => setMeetingLinkDraft(e.target.value)}
+            placeholder="https://meet.google.com/... or https://zoom.us/..."
+            className="flex-1 border border-outline-variant rounded-xl px-md py-sm text-body-md focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+          />
+          <button
+            onClick={saveMeetingLink}
+            disabled={meetingLinkSaving || appointmentLoading}
+            className="rounded-xl bg-primary px-4 py-3 text-label-md font-bold text-on-primary disabled:opacity-40"
+          >
+            {meetingLinkSaving ? "Saving..." : "Save Link"}
+          </button>
+        </div>
+        {appointmentLoading && <p className="text-caption text-outline">Loading appointment details…</p>}
+        {appointmentError && <p className="text-caption text-error">{appointmentError}</p>}
+        {meetingLinkMessage && <p className="text-caption text-primary font-semibold">{meetingLinkMessage}</p>}
+        {appointment?.meeting_link && (
+          <a
+            href={appointment.meeting_link}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-caption font-semibold text-primary hover:underline"
+          >
+            <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+            Preview current patient link
+          </a>
+        )}
       </div>
 
       {/* Progress bar */}

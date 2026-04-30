@@ -50,6 +50,7 @@ create table appointments (
   scheduled_at timestamptz not null,
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'completed', 'cancelled')),
   workflow_status text not null default 'coordination' check (workflow_status in ('legal', 'signer', 'coordination')),
+  meeting_link text,
   notes text,
   created_at timestamptz not null default now(),
   constraint uq_appointments_doctor_slot unique (doctor_id, scheduled_at)

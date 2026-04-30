@@ -108,6 +108,22 @@ class BookingRequest(BaseModel):
 class RescheduleRequest(BaseModel):
     new_scheduled_at: str       # ISO-8601 datetime string for the new time
 
+
+class AppointmentMeetingLinkUpdate(BaseModel):
+    meeting_link: Optional[str] = None
+
+    @field_validator("meeting_link")
+    @classmethod
+    def validate_meeting_link(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if not (cleaned.startswith("http://") or cleaned.startswith("https://")):
+            raise ValueError("Meeting link must start with http:// or https://")
+        return cleaned
+
 # --- Intake Models ---
 # Field names align with DB schema (intake_forms table)
 class IntakeForm(BaseModel):
