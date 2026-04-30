@@ -166,10 +166,7 @@ def _transcribe_elevenlabs_api(
 
         response = client.post(
             "https://api.elevenlabs.io/v1/speech-to-text",
-            headers={
-                "xi-api-key": api_key,
-                "Authorization": f"Bearer {api_key}",
-            },
+            headers={"xi-api-key": api_key},
             files=files,
             data=data,
         )
