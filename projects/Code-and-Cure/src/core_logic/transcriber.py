@@ -159,7 +159,7 @@ def _transcribe_elevenlabs_api(
     mime_type = _EXTENSION_TO_MIME.get(ext, "audio/mpeg")
 
     with httpx.Client(timeout=120.0) as client:
-        files = {"audio": (filename, audio_bytes, mime_type)}
+        files = {"file": (filename, audio_bytes, mime_type)}
         data = {"model_id": "scribe_v1"}
         if language:
             data["language_code"] = language
