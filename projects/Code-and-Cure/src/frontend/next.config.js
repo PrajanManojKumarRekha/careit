@@ -6,8 +6,10 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
 ];
 
+const nextOutput = process.env.NEXT_OUTPUT_MODE === "standalone" ? "standalone" : undefined;
+
 const nextConfig = {
-  output: "standalone",
+  output: nextOutput,
   poweredByHeader: false,
   async headers() {
     return [

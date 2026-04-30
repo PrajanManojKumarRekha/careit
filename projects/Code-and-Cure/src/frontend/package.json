@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "clean:next": "node scripts/clean-next.mjs",
+    "predev": "npm run clean:next",
     "dev": "next dev",
+    "prebuild": "npm run clean:next",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.18.1",
     "@types/leaflet": "^1.9.21",
     "leaflet": "^1.9.4",
     "next": "^14.2.35",

@@ -4,6 +4,7 @@ import ProtectedRoute from "@/components/shared/ProtectedRoute";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, Appointment } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 
 function statusStyle(status: string) {
   const map: Record<string, string> = {
@@ -17,6 +18,7 @@ function statusStyle(status: string) {
 
 function DoctorDashboardContent() {
   const router = useRouter();
+  const { logout } = useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,9 +114,13 @@ function DoctorDashboardContent() {
               </div>
             )}
           </div>
-          <a href="/" className="text-sm text-on-surface-variant hover:text-primary font-semibold transition-colors px-3 py-1.5 rounded-lg hover:bg-white/40">
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="text-sm text-on-surface-variant hover:text-primary font-semibold transition-colors px-3 py-1.5 rounded-lg hover:bg-white/40"
+          >
             Sign out
-          </a>
+          </button>
         </div>
       </header>
 
