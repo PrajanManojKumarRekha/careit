@@ -146,7 +146,7 @@ def _transcribe_elevenlabs_api(
     # We keep parsing defensive because response shape can vary by model/version.
     with httpx.Client(timeout=120.0) as client:
         files = {"file": (filename, audio_bytes)}
-        data = {"model_id": "scribe_v1"}
+        data = {"model_id": "scribe_v2"}
         if language:
             data["language_code"] = language
 
