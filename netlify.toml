@@ -1,0 +1,6 @@
+[build]
+  base = "projects/Code-and-Cure/src/frontend"
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
