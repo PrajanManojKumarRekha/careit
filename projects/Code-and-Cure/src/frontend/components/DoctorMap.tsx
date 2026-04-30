@@ -226,6 +226,9 @@ export default function DoctorMap({ doctors, onBook }: Props) {
       layerGroupRef.current = layerGroup;
 
       setMapReady(true);
+      map.whenReady(() => {
+        map.invalidateSize(false);
+      });
 
       // Request geolocation and add "You are here" marker
       if (navigator.geolocation) {
@@ -247,7 +250,7 @@ export default function DoctorMap({ doctors, onBook }: Props) {
                  </div>`
               )
               .addTo(mapRef.current);
-            mapRef.current.flyTo([lat, lng], 10, { duration: 1.8 });
+            mapRef.current.setView([lat, lng], 10, { animate: false });
           },
           () => {} // silently ignore if denied
         );
@@ -256,7 +259,10 @@ export default function DoctorMap({ doctors, onBook }: Props) {
 
     return () => {
       mounted = false;
-      mapRef.current?.remove();
+      if (mapRef.current) {
+        mapRef.current.stop();
+        mapRef.current.remove();
+      }
       mapRef.current        = null;
       layerGroupRef.current = null;
       lRef.current          = null;

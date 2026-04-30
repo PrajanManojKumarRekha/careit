@@ -1,78 +1,90 @@
 "use client";
 
+import { useAuth as useClerkAuth, useUser } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
-import { api, API_BASE_URL, AuthChallengeResponse, AuthResponse } from "@/lib/api";
+
+import { api, clearStoredToken } from "@/lib/api";
 
 export type Role = "patient" | "doctor";
 
 export interface User {
   id: string;
   name: string;
+  email: string;
   role: Role;
 }
 
 export function useAuth() {
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return {
+      user: null,
+      loading: false,
+      error: "Clerk is not configured. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY to enable authentication.",
+      isLoaded: true,
+      isSignedIn: false,
+      logout: async () => undefined,
+    };
+  }
+
+  return useConfiguredAuth();
+}
+
+function useConfiguredAuth() {
+  const { isLoaded, isSignedIn, signOut } = useClerkAuth();
+  const { user: clerkUser } = useUser();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!isSignedIn) {
+      setUser(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
-    api.auth.me()
+    setLoading(true);
+    setError(null);
+
+    api.auth
+      .syncSession()
       .then((data) => {
         if (cancelled) return;
         setUser({
-          id: data.user_id,
-          name: data.role === "patient" ? "Patient" : "Doctor",
+          id: data.user_id || clerkUser?.id || "me",
+          name: data.full_name || clerkUser?.fullName || "careIT User",
+          email: data.email || clerkUser?.primaryEmailAddress?.emailAddress || "",
           role: data.role as Role,
         });
       })
-      .catch(() => {
-        if (!cancelled) setUser(null);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setUser(null);
+        setError(err instanceof Error ? err.message : "Authentication failed.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const completeLogin = async (data: AuthResponse): Promise<void> => {
-    const u: User = {
-      id: "me",
-      name: data.role === "patient" ? "Patient" : "Doctor",
-      role: data.role as Role,
-    };
-    setUser(u);
-    window.location.href = data.role === "patient" ? "/patient/dashboard" : "/doctor/dashboard";
-  };
-
-  const login = async (email: string, password: string): Promise<AuthChallengeResponse> => {
-    return api.auth.login(email, password);
-  };
-
-  const verifyLogin = async (email: string, code: string, challengeId: string): Promise<void> => {
-    const data = await api.auth.verifyLogin(email, code, challengeId);
-    await completeLogin(data);
-  };
-
-  const register = async (
-    email: string,
-    password: string,
-    fullName: string,
-    role: Role,
-  ): Promise<AuthChallengeResponse> => {
-    return api.auth.register(email, password, fullName, role);
-  };
+  }, [clerkUser?.fullName, clerkUser?.id, clerkUser?.primaryEmailAddress?.emailAddress, isLoaded, isSignedIn]);
 
   const logout = async () => {
-    await fetch(`${API_BASE_URL}/api/v1/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-    }).catch(() => undefined);
+    try {
+      await api.auth.logout();
+    } catch {
+      // Clerk session invalidation is the source of truth, so backend logout is best-effort.
+    }
+    clearStoredToken();
+    await signOut({ redirectUrl: "/" });
     setUser(null);
-    window.location.href = "/";
   };
 
-  return { user, loading, login, verifyLogin, register, logout };
+  return { user, loading, error, isLoaded, isSignedIn, logout };
 }

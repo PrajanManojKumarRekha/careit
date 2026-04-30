@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.api.config import (
     RATE_LIMIT_AUTH_MAX_REQUESTS,
     RATE_LIMIT_MAX_REQUESTS,
+    RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
 )
 
@@ -19,9 +20,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.window_seconds = RATE_LIMIT_WINDOW_SECONDS
         self.default_limit = RATE_LIMIT_MAX_REQUESTS
         self.auth_limit = RATE_LIMIT_AUTH_MAX_REQUESTS
+        self.transcribe_limit = RATE_LIMIT_TRANSCRIBE_MAX_REQUESTS
         self._hits: dict[str, Deque[float]] = defaultdict(deque)
 
     def _limit_for_path(self, path: str) -> int:
+        if path.startswith("/api/v1/soap/transcribe-upload"):
+            return self.transcribe_limit
         if path.startswith("/api/v1/auth/login") or path.startswith("/api/v1/auth/register"):
             return self.auth_limit
         return self.default_limit

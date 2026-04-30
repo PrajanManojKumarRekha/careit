@@ -418,7 +418,7 @@ async def list_doctors(
     else:
         merged.sort(key=lambda d: d.rating, reverse=True)
 
-    return merged[:50]
+    return merged[:200]
 
 
 @router.get("/{doctor_id}/slots", response_model=List[AppointmentSlot], dependencies=[Depends(require_role("patient"))])

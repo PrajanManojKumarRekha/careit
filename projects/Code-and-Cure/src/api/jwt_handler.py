@@ -1,23 +1,20 @@
 import os
 from datetime import datetime, timedelta
-from jose import jwt, JWTError
+
 from fastapi import HTTPException
-from src.api.config import IS_PRODUCTION
+from jose import JWTError, jwt
+
+from src.api.clerk_auth import resolve_authenticated_user
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
 ISSUER = os.getenv("JWT_ISSUER", "careit-api")
 
-if not SECRET_KEY:
-    raise RuntimeError("JWT_SECRET_KEY must be set in environment variables.")
 
 def create_token(payload: dict) -> str:
-    """
-    Takes a dictionary with user_id and role,
-    adds an expiration timestamp, and returns
-    a signed JWT string the frontend stores.
-    """
+    if not SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY must be set to mint legacy application tokens.")
     data = payload.copy()
     now = datetime.utcnow()
     data["exp"] = now + timedelta(hours=TOKEN_EXPIRY_HOURS)
@@ -25,13 +22,23 @@ def create_token(payload: dict) -> str:
     data["iss"] = ISSUER
     return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
-def decode_token(token: str) -> dict:
-    """
-    Takes a JWT string from the Authorization header,
-    verifies the signature and expiration, and returns
-    the payload (user_id, role). Raises 401 if invalid.
-    """
+
+def decode_legacy_token(token: str) -> dict:
+    if not SECRET_KEY:
+        raise HTTPException(status_code=401, detail="Legacy authentication is not configured.")
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], issuer=ISSUER)
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+
+
+def decode_token(token: str) -> dict:
+    if token.count(".") != 2:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+    if SECRET_KEY:
+        try:
+            return decode_legacy_token(token)
+        except HTTPException:
+            pass
+    return resolve_authenticated_user(token)

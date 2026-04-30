@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal
 from datetime import datetime
 
 # --- Auth Models ---
@@ -59,6 +59,28 @@ class TriageResponse(BaseModel):
     rationale: str
     extracted_symptom_cues: List[str]
     confidence: Optional[float] = None
+
+
+class TriageChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class TriageChatRequest(BaseModel):
+    message: str
+    history: List[TriageChatMessage] = Field(default_factory=list)
+
+
+class TriageChatResponse(BaseModel):
+    status: Literal["follow_up", "recommendation", "emergency"]
+    message: str
+    recommended_specialty: Optional[str] = None
+    rationale: Optional[str] = None
+    extracted_symptom_cues: List[str] = Field(default_factory=list)
+    confidence: Optional[float] = None
+    follow_up_question: Optional[str] = None
+    suggested_replies: List[str] = Field(default_factory=list)
+    conversation_summary: Optional[str] = None
 
 # --- Doctor & Appointment Models ---
 class Doctor(BaseModel):
@@ -261,7 +283,7 @@ class TranscribeUploadResponse(BaseModel):
     appointment_id: str
     transcript: str
     soap_draft: SOAPDraftWithMeta
-    transcription_provider: str      # "openai_whisper_api" | "local_whisper"
+    transcription_provider: str      # "openai_whisper_api" | "elevenlabs_speech_api" | "local_whisper"
     language_detected: str
     duration_seconds: Optional[float] = None
     file_info: Dict                  # {filename, size_mb, content_type}

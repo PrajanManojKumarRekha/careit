@@ -4,7 +4,7 @@ import ProtectedRoute from "@/components/shared/ProtectedRoute";
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { api, Appointment, Doctor, Prescription } from "@/lib/api";
+import { api, Appointment, Doctor, Prescription, TriageChatMessage, TriageChatResponse } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 
 // Load the Leaflet map client-side only (no SSR — Leaflet requires window)
@@ -17,7 +17,15 @@ const DoctorMap = dynamic(() => import("@/components/DoctorMap"), {
 
 type ChatMessage =
   | { role: "user"; text: string }
-  | { role: "bot"; text: string; suggestion?: { specialty: string; rationale: string }; emergency?: boolean };
+  | {
+      role: "bot";
+      text: string;
+      suggestion?: { specialty: string; rationale: string };
+      emergency?: boolean;
+      followUpQuestion?: string;
+      suggestedReplies?: string[];
+      summary?: string;
+    };
 
 function MiniCalendar({ appointments }: { appointments: Appointment[] }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -165,6 +173,29 @@ function ChatSuggestionPill({
   );
 }
 
+function QuickReplyRow({
+  replies,
+  onSelect,
+}: {
+  replies: string[];
+  onSelect: (reply: string) => void;
+}) {
+  if (!replies.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {replies.map((reply) => (
+        <button
+          key={reply}
+          onClick={() => onSelect(reply)}
+          className="rounded-full border border-outline-variant bg-surface-container-low px-3 py-1.5 text-caption font-semibold text-on-surface transition-all hover:border-primary hover:text-primary"
+        >
+          {reply}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SideNav({
   onLogout,
   onComingSoon,
@@ -238,6 +269,41 @@ function SideNav({
   );
 }
 
+function MobileBottomBar({
+  onBook,
+  onRecords,
+  onConsultations,
+}: {
+  onBook: () => void;
+  onRecords: () => void;
+  onConsultations: () => void;
+}) {
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/30 bg-white/85 px-4 py-3 shadow-[0_-10px_30px_rgba(0,77,64,0.12)] backdrop-blur-xl lg:hidden">
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          onClick={onBook}
+          className="rounded-2xl bg-primary px-3 py-3 text-sm font-bold text-on-primary shadow-md"
+        >
+          Book
+        </button>
+        <button
+          onClick={onConsultations}
+          className="rounded-2xl border border-outline-variant bg-white px-3 py-3 text-sm font-semibold text-on-surface"
+        >
+          Consult
+        </button>
+        <button
+          onClick={onRecords}
+          className="rounded-2xl border border-outline-variant bg-white px-3 py-3 text-sm font-semibold text-on-surface"
+        >
+          Records
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const router = useRouter();
   const { logout } = useAuth();
@@ -256,7 +322,11 @@ function Dashboard() {
   const [prescriptions, setPrescriptions]   = useState<Prescription[]>([]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "bot", text: "Hello! How are you feeling today? Describe your symptoms and I'll find the best specialist for you." },
+    {
+      role: "bot",
+      text: "Describe what you are feeling, where it is happening, and when it started. I can ask follow-up questions before suggesting the most appropriate specialist.",
+      suggestedReplies: ["Headache with nausea", "Persistent cough", "Stomach pain after eating"],
+    },
   ]);
   const [chatInput, setChatInput]   = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -326,39 +396,75 @@ function Dashboard() {
 
   const clearSearch = () => { setSearch(""); setSpecialtyFilter(undefined); };
 
-  const handleChatSend = async () => {
-    const text = chatInput.trim();
-    if (!text || chatLoading) return;
+  const toTriageHistory = (history: ChatMessage[]): TriageChatMessage[] =>
+    history.map((item) => ({
+      role: item.role === "bot" ? "assistant" : "user",
+      text:
+        item.role === "bot"
+          ? item.followUpQuestion
+            ? `${item.text} ${item.followUpQuestion}`.trim()
+            : item.text
+          : item.text,
+    }));
+
+  const sendChatMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || chatLoading) return;
     setChatInput("");
-    setMessages((prev) => [...prev, { role: "user", text }]);
+    const nextHistory = [...messages, { role: "user", text: trimmed } as ChatMessage];
+    setMessages(nextHistory);
     setChatLoading(true);
     try {
-      const result = await api.symptoms.analyze(text);
-      const isEmergency = result.recommended_specialty === "Emergency Medicine";
-      if (isEmergency) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "bot",
-            text: result.rationale,
-            emergency: true,
-          },
-        ]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "bot",
-            text: `Based on your symptoms, you may benefit from seeing a **${result.recommended_specialty}**. ${result.rationale}`,
-            suggestion: { specialty: result.recommended_specialty, rationale: result.rationale },
-          },
-        ]);
-      }
-    } catch {
-      setMessages((prev) => [...prev, { role: "bot", text: "Sorry, I had trouble analyzing those symptoms. Try rephrasing them." }]);
+      const result = await api.symptoms.chat(trimmed, toTriageHistory(messages));
+      setMessages((prev) => [...prev, buildAssistantMessage(result)]);
+    } catch (error: unknown) {
+      const text = error instanceof Error ? error.message : "Sorry, I had trouble analyzing those symptoms.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "bot",
+          text: `${text} Please try again with the main symptom, location, and timing.`,
+          suggestedReplies: ["Headache since this morning", "Cough for 5 days", "Sharp stomach pain after meals"],
+        },
+      ]);
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const handleChatSend = async () => {
+    await sendChatMessage(chatInput);
+  };
+
+  const buildAssistantMessage = (result: TriageChatResponse): ChatMessage => {
+    if (result.status === "emergency") {
+      return {
+        role: "bot",
+        text: result.message,
+        emergency: true,
+        summary: result.conversation_summary || undefined,
+      };
+    }
+    if (result.status === "follow_up") {
+      return {
+        role: "bot",
+        text: result.message,
+        followUpQuestion: result.follow_up_question || undefined,
+        suggestedReplies: result.suggested_replies,
+        summary: result.conversation_summary || undefined,
+      };
+    }
+    return {
+      role: "bot",
+      text: `${result.message} ${result.rationale || ""}`.trim(),
+      suggestion: result.recommended_specialty
+        ? {
+            specialty: result.recommended_specialty,
+            rationale: result.rationale || "",
+          }
+        : undefined,
+      summary: result.conversation_summary || undefined,
+    };
   };
 
   const applySuggestion = (specialty: string) => {
@@ -425,14 +531,14 @@ function Dashboard() {
 
       {/* ── Toast ─────────────────────────────────────────────────────────── */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] glass-panel px-lg py-sm rounded-2xl shadow-2xl text-label-md font-semibold text-on-surface flex items-center gap-sm border border-white/30 pointer-events-none whitespace-nowrap">
+        <div className="fixed bottom-24 left-4 right-4 z-[9999] mx-auto max-w-xl glass-panel px-lg py-sm rounded-2xl shadow-2xl text-label-md font-semibold text-on-surface flex items-center gap-sm border border-white/30 pointer-events-none lg:bottom-6 lg:left-1/2 lg:right-auto lg:w-auto lg:-translate-x-1/2">
           <span className="material-symbols-outlined text-primary text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
           {toast}
         </div>
       )}
 
       {/* ── Top Nav ─────────────────────────────────────────────────────── */}
-      <header className="fixed top-0 left-0 right-0 z-50 lg:pl-64 flex items-center justify-between px-6 py-3 glass-panel border-b border-white/20 shadow-[0_4px_24px_rgba(0,77,64,0.08)]">
+      <header className="fixed top-0 left-0 right-0 z-50 lg:pl-64 flex items-center justify-between px-4 py-3 sm:px-6 glass-panel border-b border-white/20 shadow-[0_4px_24px_rgba(0,77,64,0.08)]">
         <div className="flex items-center gap-2 lg:hidden">
           <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>health_and_safety</span>
           <span className="font-black text-primary">careIT</span>
@@ -493,7 +599,7 @@ function Dashboard() {
 
           {/* Chat bubble — scroll to AI navigator */}
           <button
-            onClick={() => document.getElementById("find-doctors")?.scrollIntoView({ behavior: "smooth" })}
+            onClick={() => document.getElementById("triage-assistant")?.scrollIntoView({ behavior: "smooth" })}
             className="p-2 rounded-full hover:bg-white/40 transition-all"
           >
             <span className="material-symbols-outlined text-on-surface-variant">chat_bubble</span>
@@ -533,22 +639,37 @@ function Dashboard() {
             )}
           </div>
 
-          <button onClick={logout} className="ml-1 text-sm text-on-surface-variant hover:text-primary font-semibold transition-colors lg:hidden">
-            Sign out
-          </button>
         </div>
       </header>
 
       {/* ── Main Content ────────────────────────────────────────────────── */}
-      <main className="relative z-10 lg:ml-64 pt-24 px-margin pb-xl max-w-7xl">
+      <main className="relative z-10 lg:ml-64 pt-24 px-4 pb-32 sm:px-margin lg:pb-xl max-w-7xl">
         {/* Welcome header */}
         <header className="mb-lg">
-          <h1 className="text-display-xl text-primary mb-xs">Welcome back</h1>
-          <p className="text-body-lg text-outline">
-            {nextAppointment
-              ? `You have an upcoming appointment on ${new Date(nextAppointment.scheduled_at).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}.`
-              : "Browse our nationwide network of specialists and book your next consultation."}
-          </p>
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-4xl font-extrabold tracking-tight text-primary sm:text-display-xl mb-xs">Welcome back</h1>
+              <p className="max-w-2xl text-base text-outline sm:text-body-lg">
+                {nextAppointment
+                  ? `You have an upcoming appointment on ${new Date(nextAppointment.scheduled_at).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}.`
+                  : "Browse our nationwide network of specialists and book your next consultation."}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 md:w-auto">
+              <button
+                onClick={() => document.getElementById("find-doctors")?.scrollIntoView({ behavior: "smooth" })}
+                className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-on-primary shadow-md"
+              >
+                Find a doctor
+              </button>
+              <button
+                onClick={() => document.getElementById("my-records")?.scrollIntoView({ behavior: "smooth" })}
+                className="rounded-2xl border border-outline-variant bg-white px-4 py-3 text-sm font-semibold text-on-surface"
+              >
+                View records
+              </button>
+            </div>
+          </div>
         </header>
 
         {/* ── Bento Row 1: Appointment + AI navigator ─────────────────── */}
@@ -618,7 +739,7 @@ function Dashboard() {
           </section>
 
           {/* AI Care Navigator */}
-          <section className="lg:col-span-4 glass-card rounded-2xl flex flex-col bg-primary-container relative overflow-hidden shadow-xl">
+          <section id="triage-assistant" className="lg:col-span-4 glass-card rounded-2xl flex flex-col bg-primary-container relative overflow-hidden shadow-xl min-h-[420px]">
             <div className="absolute -right-8 -top-8 w-32 h-32 bg-secondary-container/20 rounded-full blur-3xl pointer-events-none" />
             <div className="px-md pt-md pb-sm border-b border-white/10 relative z-10">
               <div className="flex items-center gap-sm">
@@ -631,7 +752,7 @@ function Dashboard() {
                 </div>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto px-md py-sm space-y-sm relative z-10 min-h-[180px] max-h-[260px]">
+            <div className="flex-1 overflow-y-auto px-md py-sm space-y-sm relative z-10 min-h-[220px] max-h-[320px]">
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   {"emergency" in msg && msg.emergency ? (
@@ -656,8 +777,13 @@ function Dashboard() {
                           : "bg-white text-on-surface rounded-bl-sm shadow-sm"
                       }`}
                     >
-                      {msg.text.split("**").map((part, j) =>
-                        j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+                      <div className="whitespace-pre-line">
+                        {msg.text.split("**").map((part, j) =>
+                          j % 2 === 1 ? <strong key={j}>{part}</strong> : part
+                        )}
+                      </div>
+                      {msg.role === "bot" && msg.followUpQuestion && (
+                        <p className="mt-2 font-semibold text-primary">{msg.followUpQuestion}</p>
                       )}
                       {"suggestion" in msg && msg.suggestion && (
                         <ChatSuggestionPill
@@ -666,6 +792,9 @@ function Dashboard() {
                           onDismiss={() => dismissSuggestion(msg.suggestion!.specialty)}
                         />
                       )}
+                      {msg.role === "bot" && msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
+                        <QuickReplyRow replies={msg.suggestedReplies} onSelect={sendChatMessage} />
+                      )}
                     </div>
                   )}
                 </div>
@@ -673,7 +802,7 @@ function Dashboard() {
               {chatLoading && (
                 <div className="flex justify-start">
                   <div className="bg-white rounded-2xl rounded-bl-sm px-sm py-2 text-sm text-on-surface-variant animate-pulse shadow-sm">
-                    Analyzing…
+                    Reviewing your symptoms...
                   </div>
                 </div>
               )}
@@ -685,8 +814,8 @@ function Dashboard() {
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleChatSend())}
-                  placeholder="Describe your symptoms…"
-                  rows={2}
+                  placeholder="Describe the symptom, body area, and when it started..."
+                  rows={3}
                   disabled={chatLoading}
                   className="w-full bg-white border border-outline-variant/30 rounded-xl py-2 px-sm text-on-surface placeholder-outline focus:ring-2 focus:ring-secondary-fixed resize-none text-sm outline-none"
                 />
@@ -711,16 +840,16 @@ function Dashboard() {
               <span className="material-symbols-outlined">search</span>
               Find a Doctor
             </h2>
-            <div className="flex items-center gap-sm">
+            <div className="flex w-full flex-col items-stretch gap-sm sm:w-auto sm:flex-row sm:items-center">
               {specialtyFilter && (
-                <span className="text-caption bg-primary-fixed text-primary px-3 py-1 rounded-full font-bold flex items-center gap-1">
+                <span className="text-caption bg-primary-fixed text-primary px-3 py-1 rounded-full font-bold flex items-center gap-1 w-fit">
                   <span className="material-symbols-outlined text-[12px]">medical_services</span>
                   {specialtyFilter}
                   <button onClick={clearSearch} className="ml-1 opacity-60 hover:opacity-100">×</button>
                 </span>
               )}
               {/* Grid / Map toggle */}
-              <div className="flex rounded-xl border border-outline-variant overflow-hidden">
+              <div className="flex rounded-xl border border-outline-variant overflow-hidden self-start">
                 <button
                   onClick={() => setViewMode("grid")}
                   className={`flex items-center gap-1 px-3 py-2 text-label-md font-semibold transition-all ${
@@ -748,8 +877,8 @@ function Dashboard() {
           </div>
 
           {/* Search + filter bar */}
-          <div className="flex gap-sm mb-md flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="grid gap-sm mb-md md:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div className="relative min-w-0">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[18px]">search</span>
               <input
                 type="text"
@@ -767,7 +896,7 @@ function Dashboard() {
             <button
               onClick={nearMeActive ? clearNearMe : handleNearMe}
               disabled={geoLoading}
-              className={`flex items-center gap-xs px-md py-3 rounded-xl border text-label-md font-semibold transition-all ${
+              className={`flex min-h-[48px] items-center justify-center gap-xs px-md py-3 rounded-xl border text-label-md font-semibold transition-all ${
                 nearMeActive
                   ? "bg-primary text-on-primary border-primary shadow-md"
                   : "bg-white text-on-surface-variant border-outline-variant hover:border-primary hover:text-primary"
@@ -780,7 +909,7 @@ function Dashboard() {
               <select
                 value={radius}
                 onChange={(e) => setRadius(Number(e.target.value))}
-                className="bg-white border border-outline-variant text-on-surface rounded-xl px-3 py-3 text-sm"
+                className="min-h-[48px] bg-white border border-outline-variant text-on-surface rounded-xl px-3 py-3 text-sm"
               >
                 {[10, 25, 50, 100, 200].map((r) => (
                   <option key={r} value={r}>{r} mi</option>
@@ -812,12 +941,11 @@ function Dashboard() {
                 </div>
               )}
               <DoctorMap
-                key={doctors.map((d) => d.id).join(",")}
                 doctors={doctors}
                 onBook={(d) => router.push(`/patient/booking/${d.id}?name=${encodeURIComponent(d.name)}`)}
               />
               {/* Legend */}
-              <div className="absolute bottom-4 left-4 z-[1000] glass-panel rounded-xl px-sm py-xs shadow-md border border-white/20 flex items-center gap-xs text-caption text-on-surface-variant">
+              <div className="absolute bottom-4 left-4 right-4 z-[1000] glass-panel rounded-xl px-sm py-xs shadow-md border border-white/20 flex items-center gap-xs text-caption text-on-surface-variant sm:right-auto">
                 <span className="material-symbols-outlined text-[14px] text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
                 {doctors.length} specialists nationwide · click a pin to book
               </div>
@@ -982,6 +1110,12 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      <MobileBottomBar
+        onBook={() => document.getElementById("find-doctors")?.scrollIntoView({ behavior: "smooth" })}
+        onConsultations={() => router.push("/patient/consultation")}
+        onRecords={() => document.getElementById("my-records")?.scrollIntoView({ behavior: "smooth" })}
+      />
     </div>
   );
 }

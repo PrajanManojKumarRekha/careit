@@ -8,8 +8,34 @@ function resolveApiBaseUrl(): string {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
-export function getStoredToken(): string | null {
-  return null;
+type AccessTokenProvider = () => Promise<string | null> | string | null;
+
+let accessTokenProvider: AccessTokenProvider | null = null;
+let storedAccessToken: string | null = null;
+
+export function setAccessTokenProvider(provider: AccessTokenProvider | null) {
+  accessTokenProvider = provider;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function getStoredToken(): Promise<string | null> {
+  if (accessTokenProvider) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const token = await accessTokenProvider();
+      const normalized = token?.trim() || null;
+      if (normalized) {
+        storedAccessToken = normalized;
+        return normalized;
+      }
+      if (attempt < 4) {
+        await sleep(150);
+      }
+    }
+  }
+  return storedAccessToken;
 }
 
 function formatErrorDetail(detail: unknown, fallback: string): string {
@@ -42,7 +68,7 @@ function formatErrorDetail(detail: unknown, fallback: string): string {
 
 // Standard JSON fetch with Authorization header
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getStoredToken();
+  const token = await getStoredToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((init.headers as Record<string, string>) || {}),
@@ -69,7 +95,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // Multipart form-data upload — do NOT set Content-Type; browser adds boundary
 async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
-  const token = getStoredToken();
+  const token = await getStoredToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -96,27 +122,22 @@ async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   return res.json();
 }
 
-export function setStoredToken(token: string) {
-  void token;
+export function setStoredToken(token: string | null) {
+  storedAccessToken = token?.trim() || null;
 }
 
 export function clearStoredToken() {
-  return;
+  storedAccessToken = null;
 }
 
 // ---- Types ----
 export interface AuthResponse {
-  access_token?: string | null;
+  status?: string;
+  user_id?: string;
   role: string;
+  email?: string;
+  full_name?: string;
   message?: string | null;
-}
-
-export interface AuthChallengeResponse {
-  status: string;
-  message: string;
-  email: string;
-  challenge_id: string;
-  role?: string | null;
 }
 
 export interface Doctor {
@@ -152,6 +173,23 @@ export interface TriageResponse {
   rationale: string;
   extracted_symptom_cues: string[];
   confidence: number | null;
+}
+
+export interface TriageChatMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface TriageChatResponse {
+  status: "follow_up" | "recommendation" | "emergency";
+  message: string;
+  recommended_specialty?: string | null;
+  rationale?: string | null;
+  extracted_symptom_cues: string[];
+  confidence: number | null;
+  follow_up_question?: string | null;
+  suggested_replies: string[];
+  conversation_summary?: string | null;
 }
 
 export interface SOAPNote {
@@ -279,32 +317,18 @@ export interface Prescription {
 // ---- API surface ----
 export const api = {
   auth: {
-    login: (email: string, password: string) =>
-      apiFetch<AuthChallengeResponse>("/api/v1/auth/login", {
+    syncSession: () =>
+      apiFetch<AuthResponse>("/api/v1/auth/session", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({}),
       }),
-    verifyLogin: (email: string, code: string, challenge_id: string) =>
-      apiFetch<AuthResponse>("/api/v1/auth/login/verify", {
+    me: () =>
+      apiFetch<AuthResponse>("/api/v1/auth/me"),
+    logout: () =>
+      apiFetch<{ status: string }>("/api/v1/auth/logout", {
         method: "POST",
-        body: JSON.stringify({ email, code, challenge_id }),
+        body: JSON.stringify({}),
       }),
-    register: (email: string, password: string, full_name: string, role: string) =>
-      apiFetch<AuthChallengeResponse>("/api/v1/auth/register", {
-        method: "POST",
-        body: JSON.stringify({ email, password, full_name, role }),
-      }),
-    verifyEmail: (email: string, code: string, challenge_id?: string) =>
-      apiFetch<{ status: string; message: string }>("/api/v1/auth/verify-email", {
-        method: "POST",
-        body: JSON.stringify({ email, code, challenge_id }),
-      }),
-    resendVerification: (email: string) =>
-      apiFetch<AuthChallengeResponse>("/api/v1/auth/resend-verification", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-      }),
-    me: () => apiFetch<{ user_id: string; role: string }>("/api/v1/auth/me"),
   },
 
   symptoms: {
@@ -312,6 +336,11 @@ export const api = {
       apiFetch<TriageResponse>("/api/v1/symptoms/analyze", {
         method: "POST",
         body: JSON.stringify({ symptoms, red_flag_context }),
+      }),
+    chat: (message: string, history: TriageChatMessage[]) =>
+      apiFetch<TriageChatResponse>("/api/v1/symptoms/chat", {
+        method: "POST",
+        body: JSON.stringify({ message, history }),
       }),
   },
 
@@ -402,11 +431,21 @@ export const api = {
         body: JSON.stringify({ transcript }),
       }),
     downloadDocument: async (appointmentId: string) => {
-      const token = getStoredToken();
-      const res = await fetch(`${API_BASE_URL}/api/v1/soap/${appointmentId}/document/download`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: "include",
-      });
+      const token = await getStoredToken();
+      let res: Response;
+      try {
+        res = await fetch(`${API_BASE_URL}/api/v1/soap/${appointmentId}/document/download`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: "include",
+        });
+      } catch (error) {
+        if (error instanceof TypeError) {
+          throw new Error(
+            `Unable to reach the API at ${API_BASE_URL}. Check NEXT_PUBLIC_API_BASE_URL/NEXT_PUBLIC_API_URL, the backend server, and CORS settings.`
+          );
+        }
+        throw error;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || "Failed to download SOAP document");

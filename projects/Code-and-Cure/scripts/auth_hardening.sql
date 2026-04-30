@@ -1,4 +1,6 @@
 alter table users
+  add column if not exists clerk_user_id text,
+  alter column password_hash drop not null,
   add column if not exists email_verified_at timestamptz,
   add column if not exists failed_login_attempts integer not null default 0,
   add column if not exists locked_until timestamptz;
@@ -14,6 +16,7 @@ create table if not exists auth_challenges (
 );
 
 create index if not exists idx_users_email_verified on users(email_verified_at);
+create unique index if not exists idx_users_clerk_user_id on users(clerk_user_id) where clerk_user_id is not null;
 create index if not exists idx_users_locked_until on users(locked_until);
 create index if not exists idx_auth_challenges_user on auth_challenges(user_id);
 create index if not exists idx_auth_challenges_purpose on auth_challenges(purpose);

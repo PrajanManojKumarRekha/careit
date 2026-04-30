@@ -2,8 +2,9 @@ create extension if not exists "uuid-ossp";
 
 create table users (
   id uuid primary key default uuid_generate_v4(),
+  clerk_user_id text unique,
   email text unique not null,
-  password_hash text not null,
+  password_hash text,
   full_name text not null,
   role text not null check (role in ('patient', 'doctor', 'admin')),
   email_verified_at timestamptz,
@@ -166,6 +167,7 @@ create table logs (
 );
 
 create index idx_users_email on users(email);
+create unique index idx_users_clerk_user_id on users(clerk_user_id) where clerk_user_id is not null;
 create index idx_users_email_verified on users(email_verified_at);
 create index idx_users_locked_until on users(locked_until);
 create index idx_auth_challenges_user on auth_challenges(user_id);

@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+import asyncio
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ from src.api.models import (
 )
 from src.api.dependencies import require_role, get_current_user
 from src.api.config import ALLOW_DEMO_MODE
+from src.api.config import (
+    TRANSCRIPTION_MAX_CONCURRENCY,
+    TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS,
+)
 from src.core_logic.soap_parser import parse_transcript_to_soap
 from src.core_logic.stream_session import (
     ConsultationSession,
@@ -74,6 +79,7 @@ def _require_doctor_appointment_access(current_user: dict, appointment_id: str) 
 # attempted opportunistically and is non-blocking if unavailable.
 # ---------------------------------------------------------------------------
 _sessions: dict[str, ConsultationSession] = {}
+_transcription_semaphore = asyncio.Semaphore(max(1, TRANSCRIPTION_MAX_CONCURRENCY))
 
 
 def _evict_stale_sessions() -> None:
@@ -144,7 +150,8 @@ async def transcribe_upload(
 
     Workflow:
       1. Validate file type and size.
-      2. Transcribe via OpenAI Whisper API (if OPENAI_API_KEY set) or
+      2. Transcribe via OpenAI Whisper API (if OPENAI_API_KEY set), then
+         ElevenLabs Speech API (if ELEVENLABS_API_KEY set), then
          local openai-whisper (fallback, no key needed).
       3. Run transcript through SOAP parser (deterministic, no LLM inference).
       4. Persist as unapproved soap_note draft (best-effort; non-blocking on DB failure).
@@ -191,11 +198,28 @@ async def transcribe_upload(
 
     # 3. Transcribe
     try:
-        result = transcribe_audio(
-            audio_bytes,
-            filename=filename,
-            language=language if language != "en" else None,
-        )
+        try:
+            await asyncio.wait_for(
+                _transcription_semaphore.acquire(),
+                timeout=max(0.1, TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS),
+            )
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Transcription service is busy. Please retry shortly."
+                ),
+            ) from exc
+
+        try:
+            result = await asyncio.to_thread(
+                transcribe_audio,
+                audio_bytes,
+                filename=filename,
+                language=language if language != "en" else None,
+            )
+        finally:
+            _transcription_semaphore.release()
     except TranscriptionError as exc:
         raise HTTPException(status_code=503, detail=f"{exc.code}: {exc.message}")
     except Exception as exc:

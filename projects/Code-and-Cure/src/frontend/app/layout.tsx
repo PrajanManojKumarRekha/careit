@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
+import ClerkAppProvider from "@/components/auth/ClerkAppProvider";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -24,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="font-manrope bg-background text-on-background antialiased selection:bg-primary-fixed selection:text-on-primary-fixed">
-        {children}
+        <ClerkAppProvider>{children}</ClerkAppProvider>
       </body>
     </html>
   );

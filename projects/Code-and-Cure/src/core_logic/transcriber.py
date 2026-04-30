@@ -1,9 +1,10 @@
 """Audio/video transcription provider with provider fallback.
 
 Priority chain:
-  1. OpenAI Whisper API  — if OPENAI_API_KEY env var is set
-  2. Local openai-whisper — if openai-whisper package is installed (CPU, slower)
-  3. TranscriptionError  — structured error; caller degrades to manual transcript input
+  1. ElevenLabs Speech API   — if ELEVENLABS_API_KEY env var is set
+  2. OpenAI Whisper API      — if OPENAI_API_KEY env var is set
+  3. Local openai-whisper    — if openai-whisper package is installed (CPU, slower)
+  4. TranscriptionError      — structured error; caller degrades to manual transcript input
 
 No medical content is fabricated. Transcription returns the raw speech content
 exactly as the provider produces it — no summarisation or inference applied here.
@@ -13,6 +14,7 @@ import io
 import os
 import tempfile
 from dataclasses import dataclass
+import httpx
 
 # Max file size for OpenAI Whisper API (25 MB hard limit)
 WHISPER_API_MAX_BYTES = 25 * 1024 * 1024
@@ -32,7 +34,7 @@ _local_whisper_model = None
 @dataclass
 class TranscriptionResult:
     transcript: str
-    provider: str          # "openai_whisper_api" | "local_whisper"
+    provider: str          # "openai_whisper_api" | "elevenlabs_speech_api" | "local_whisper"
     language_detected: str
     duration_seconds: float | None
 
@@ -66,29 +68,39 @@ def transcribe_audio(
         filename:    Original filename (used to infer format).
         language:    ISO-639-1 hint (e.g. "en", "es"). None = auto-detect.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    _last_errors: list[str] = []
 
-    if api_key:
+    if elevenlabs_api_key:
         try:
-            return _transcribe_openai_api(audio_bytes, filename, language, api_key)
+            return _transcribe_elevenlabs_api(audio_bytes, filename, language, elevenlabs_api_key)
         except Exception as exc:
             # If the API call itself fails (network, quota, etc.) fall through
-            # to local Whisper rather than crashing the request.
-            _last_api_error = str(exc)
+            # to other providers rather than crashing the request.
+            _last_errors.append(f"ElevenLabs: {exc}")
     else:
-        _last_api_error = "OPENAI_API_KEY not set"
+        _last_errors.append("ElevenLabs: ELEVENLABS_API_KEY not set")
+
+    if openai_api_key:
+        try:
+            return _transcribe_openai_api(audio_bytes, filename, language, openai_api_key)
+        except Exception as exc:
+            _last_errors.append(f"OpenAI: {exc}")
+    else:
+        _last_errors.append("OpenAI: OPENAI_API_KEY not set")
 
     # Local Whisper fallback
     try:
         return _transcribe_local_whisper(audio_bytes, filename, language)
     except ImportError:
-        pass
-    except Exception:
-        pass
+        _last_errors.append("Local Whisper: openai-whisper package not installed")
+    except Exception as exc:
+        _last_errors.append(f"Local Whisper: {exc}")
 
     raise TranscriptionError(
         code="TRANSCRIPTION_PROVIDER_UNAVAILABLE",
-        message=f"No transcription provider available. Last OpenAI API status: {_last_api_error}",
+        message="No transcription provider available. Provider statuses: " + " | ".join(_last_errors),
     )
 
 
@@ -121,6 +133,61 @@ def _transcribe_openai_api(
         provider="openai_whisper_api",
         language_detected=getattr(response, "language", language or "en"),
         duration_seconds=getattr(response, "duration", None),
+    )
+
+
+def _transcribe_elevenlabs_api(
+    audio_bytes: bytes,
+    filename: str,
+    language: str | None,
+    api_key: str,
+) -> TranscriptionResult:
+    # ElevenLabs speech endpoint accepts multipart upload and returns JSON.
+    # We keep parsing defensive because response shape can vary by model/version.
+    with httpx.Client(timeout=120.0) as client:
+        files = {"file": (filename, audio_bytes)}
+        data = {"model_id": "scribe_v1"}
+        if language:
+            data["language_code"] = language
+
+        response = client.post(
+            "https://api.elevenlabs.io/v1/speech-to-text",
+            headers={"xi-api-key": api_key},
+            files=files,
+            data=data,
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    transcript = (
+        payload.get("text")
+        or payload.get("transcript")
+        or payload.get("raw_text")
+        or ""
+    ).strip()
+    if not transcript:
+        raise TranscriptionError(
+            code="ELEVENLABS_EMPTY_TRANSCRIPT",
+            message="ElevenLabs returned no transcript text.",
+        )
+
+    detected_language = (
+        payload.get("language_code")
+        or payload.get("language")
+        or language
+        or "en"
+    )
+    duration = payload.get("duration") or payload.get("audio_duration")
+    try:
+        duration_seconds = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration_seconds = None
+
+    return TranscriptionResult(
+        transcript=transcript,
+        provider="elevenlabs_speech_api",
+        language_detected=detected_language,
+        duration_seconds=duration_seconds,
     )
 
 
