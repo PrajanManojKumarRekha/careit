@@ -145,14 +145,17 @@ def _transcribe_elevenlabs_api(
     # ElevenLabs speech endpoint accepts multipart upload and returns JSON.
     # We keep parsing defensive because response shape can vary by model/version.
     with httpx.Client(timeout=120.0) as client:
-        files = {"file": (filename, audio_bytes)}
-        data = {"model_id": "scribe_v2"}
+        files = {"audio": (filename, audio_bytes)}
+        data = {"model_id": "scribe_v1"}
         if language:
             data["language_code"] = language
 
         response = client.post(
             "https://api.elevenlabs.io/v1/speech-to-text",
-            headers={"xi-api-key": api_key},
+            headers={
+                "xi-api-key": api_key,
+                "Authorization": f"Bearer {api_key}",
+            },
             files=files,
             data=data,
         )
