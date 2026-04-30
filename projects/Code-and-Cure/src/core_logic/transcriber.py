@@ -136,30 +136,45 @@ def _transcribe_openai_api(
     )
 
 
+_EXTENSION_TO_MIME: dict[str, str] = {
+    ".mp4":  "video/mp4",
+    ".webm": "video/webm",
+    ".mov":  "video/quicktime",
+    ".m4a":  "audio/mp4",
+    ".mp3":  "audio/mpeg",
+    ".wav":  "audio/wav",
+    ".ogg":  "audio/ogg",
+    ".oga":  "audio/ogg",
+}
+
+
 def _transcribe_elevenlabs_api(
     audio_bytes: bytes,
     filename: str,
     language: str | None,
     api_key: str,
 ) -> TranscriptionResult:
-    # ElevenLabs speech endpoint accepts multipart upload and returns JSON.
-    # We keep parsing defensive because response shape can vary by model/version.
+    import os as _os
+    ext = _os.path.splitext(filename)[1].lower()
+    mime_type = _EXTENSION_TO_MIME.get(ext, "audio/mpeg")
+
     with httpx.Client(timeout=120.0) as client:
-        files = {"audio": (filename, audio_bytes)}
+        files = {"audio": (filename, audio_bytes, mime_type)}
         data = {"model_id": "scribe_v1"}
         if language:
             data["language_code"] = language
 
         response = client.post(
             "https://api.elevenlabs.io/v1/speech-to-text",
-            headers={
-                "xi-api-key": api_key,
-                "Authorization": f"Bearer {api_key}",
-            },
+            headers={"xi-api-key": api_key},
             files=files,
             data=data,
         )
-        response.raise_for_status()
+        if not response.is_success:
+            raise TranscriptionError(
+                code=f"ELEVENLABS_HTTP_{response.status_code}",
+                message=f"ElevenLabs returned {response.status_code}: {response.text[:300]}",
+            )
         payload = response.json()
 
     transcript = (
