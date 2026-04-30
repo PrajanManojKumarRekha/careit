@@ -182,9 +182,9 @@ export default function Home() {
 
         {/* ── Portal Section ───────────────────────────────────────────────── */}
         <section id="portal" className="bg-white/40 backdrop-blur-xl border-y border-white/20 py-xl">
-          <div className="max-w-6xl mx-auto px-margin grid grid-cols-1 md:grid-cols-2 gap-xl items-center">
+          <div className="max-w-7xl mx-auto px-margin grid grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,520px)] gap-xl items-start">
             {/* Left: Features */}
-            <div className="space-y-lg">
+            <div className="space-y-lg max-w-2xl">
               <h3 className="text-headline-lg text-primary">Access Your Care Portal</h3>
               <p className="text-body-lg text-on-surface-variant">
                 Whether you're a patient or a provider, our portal provides the tools you need for seamless health management.
@@ -209,7 +209,9 @@ export default function Home() {
             </div>
 
             {/* Right: Login card */}
-            <AuthPortal />
+            <div className="w-full max-w-[520px] justify-self-center lg:justify-self-end">
+              <AuthPortal />
+            </div>
           </div>
         </section>
       </main>

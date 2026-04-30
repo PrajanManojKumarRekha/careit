@@ -9,15 +9,20 @@ import { api, clearStoredToken, setStoredToken } from "@/lib/api";
 type Mode = "login" | "signup";
 type Role = "patient" | "doctor";
 type AuthView = "patient" | "doctor";
+const DEMO_AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DEMO_AUTH !== "false";
 
 export default function AuthPortal() {
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     return (
-      <div className="rounded-3xl border border-error/20 bg-error-container p-xl text-error shadow-xl">
-        <h4 className="text-headline-md font-bold">Authentication setup required</h4>
-        <p className="mt-sm text-sm">
-          Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in the frontend and the matching Clerk backend variables on the API.
-        </p>
+      <div className="space-y-md">
+        {DEMO_AUTH_ENABLED ? <DemoAccessPanel /> : null}
+        <div className="rounded-3xl border border-error/20 bg-error-container p-xl text-error shadow-xl">
+          <h4 className="text-headline-md font-bold">Clerk authentication setup required</h4>
+          <p className="mt-sm text-sm">
+            Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in the frontend and the matching Clerk backend variables on the API.
+            Demo login remains available so reviewers can still test the patient and doctor flow.
+          </p>
+        </div>
       </div>
     );
   }
@@ -321,6 +326,8 @@ function ConfiguredAuthPortal() {
 
   return (
     <div ref={portalRef} className="space-y-md">
+      {DEMO_AUTH_ENABLED ? <DemoAccessPanel signOutClerk={isSignedIn ? () => signOut() : undefined} /> : null}
+
       {!pendingVerification && (
         <div className="grid gap-md md:grid-cols-2">
           <button
@@ -546,6 +553,97 @@ function ConfiguredAuthPortal() {
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+function DemoAccessPanel({ signOutClerk }: { signOutClerk?: (() => Promise<void>) | undefined }) {
+  const router = useRouter();
+  const [loadingRole, setLoadingRole] = useState<Role | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runDemoLogin = async (role: Role) => {
+    setLoadingRole(role);
+    setError(null);
+    try {
+      if (signOutClerk) {
+        await signOutClerk();
+      }
+      clearStoredToken();
+      const session = await api.auth.demoLogin(role);
+      setStoredToken(session.access_token || null);
+      router.push(role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard", { scroll: false });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Demo login failed.");
+    } finally {
+      setLoadingRole(null);
+    }
+  };
+
+  return (
+    <div className="rounded-[32px] border border-secondary/20 bg-white/85 p-lg shadow-2xl">
+      <div className="flex flex-col gap-sm">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-outline">Instant Demo</p>
+          <h4 className="mt-2 text-headline-lg text-primary">Test Both Sides Without Signup</h4>
+          <p className="mt-1 text-body-md text-on-surface-variant">
+            Use the demo patient to book, then switch to the demo doctor to review the same appointment flow.
+          </p>
+        </div>
+        <div className="w-fit rounded-2xl bg-secondary-fixed/60 px-4 py-2 text-caption text-on-secondary-container font-semibold">
+          Demo mode uses shared seeded accounts.
+        </div>
+      </div>
+
+      <div className="mt-md grid gap-sm">
+        <button
+          type="button"
+          onClick={() => void runDemoLogin("patient")}
+          disabled={Boolean(loadingRole)}
+          className="rounded-[24px] border border-primary/15 bg-primary-fixed/40 p-md text-left transition-all hover:-translate-y-1 disabled:opacity-50"
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-on-primary">
+              <span className="material-symbols-outlined text-2xl">person</span>
+            </span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-primary">Demo Patient</span>
+          </div>
+          <h5 className="mt-md text-headline-md text-primary font-bold">Book an appointment</h5>
+          <p className="mt-2 text-sm text-on-surface-variant">
+            Enter the patient portal, choose a doctor, and create the booking that the doctor can review.
+          </p>
+          <p className="mt-md text-label-md font-semibold text-primary">
+            {loadingRole === "patient" ? "Opening patient demo..." : "Continue as Demo Patient"}
+          </p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void runDemoLogin("doctor")}
+          disabled={Boolean(loadingRole)}
+          className="rounded-[24px] border border-secondary/15 bg-secondary-fixed/40 p-md text-left transition-all hover:-translate-y-1 disabled:opacity-50"
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-on-secondary">
+              <span className="material-symbols-outlined text-2xl">stethoscope</span>
+            </span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-secondary-container">Demo Doctor</span>
+          </div>
+          <h5 className="mt-md text-headline-md text-primary font-bold">Review booked appointments</h5>
+          <p className="mt-2 text-sm text-on-surface-variant">
+            Open the doctor portal, inspect the appointment, add the meeting link, and continue the consultation workflow.
+          </p>
+          <p className="mt-md text-label-md font-semibold text-primary">
+            {loadingRole === "doctor" ? "Opening doctor demo..." : "Continue as Demo Doctor"}
+          </p>
+        </button>
+      </div>
+
+      <div className="mt-md rounded-2xl bg-surface-container-low px-md py-sm text-sm text-on-surface-variant">
+        Demo path: log in as patient, book the demo doctor, then switch to the demo doctor account to see that exact appointment.
+      </div>
+
+      {error && <p className="mt-md text-error text-sm bg-error-container rounded-xl px-4 py-3">{error}</p>}
     </div>
   );
 }
