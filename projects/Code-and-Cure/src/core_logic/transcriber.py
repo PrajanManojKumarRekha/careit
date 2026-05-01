@@ -1,10 +1,11 @@
 """Audio/video transcription provider with provider fallback.
 
 Priority chain:
-  1. ElevenLabs Speech API   — if ELEVENLABS_API_KEY env var is set
-  2. OpenAI Whisper API      — if OPENAI_API_KEY env var is set
-  3. Local openai-whisper    — if openai-whisper package is installed (CPU, slower)
-  4. TranscriptionError      — structured error; caller degrades to manual transcript input
+  1. Groq Whisper API        — if GROQ_API_KEY env var is set (free tier, no datacenter block)
+  2. ElevenLabs Speech API   — if ELEVENLABS_API_KEY env var is set
+  3. OpenAI Whisper API      — if OPENAI_API_KEY env var is set
+  4. Local openai-whisper    — if openai-whisper package is installed (CPU, slower)
+  5. TranscriptionError      — structured error; caller degrades to manual transcript input
 
 No medical content is fabricated. Transcription returns the raw speech content
 exactly as the provider produces it — no summarisation or inference applied here.
@@ -34,7 +35,7 @@ _local_whisper_model = None
 @dataclass
 class TranscriptionResult:
     transcript: str
-    provider: str          # "openai_whisper_api" | "elevenlabs_speech_api" | "local_whisper"
+    provider: str          # "groq_whisper_api" | "elevenlabs_speech_api" | "openai_whisper_api" | "local_whisper"
     language_detected: str
     duration_seconds: float | None
 
@@ -68,16 +69,23 @@ def transcribe_audio(
         filename:    Original filename (used to infer format).
         language:    ISO-639-1 hint (e.g. "en", "es"). None = auto-detect.
     """
+    groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
     elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     _last_errors: list[str] = []
+
+    if groq_api_key:
+        try:
+            return _transcribe_groq_api(audio_bytes, filename, language, groq_api_key)
+        except Exception as exc:
+            _last_errors.append(f"Groq: {exc}")
+    else:
+        _last_errors.append("Groq: GROQ_API_KEY not set")
 
     if elevenlabs_api_key:
         try:
             return _transcribe_elevenlabs_api(audio_bytes, filename, language, elevenlabs_api_key)
         except Exception as exc:
-            # If the API call itself fails (network, quota, etc.) fall through
-            # to other providers rather than crashing the request.
             _last_errors.append(f"ElevenLabs: {exc}")
     else:
         _last_errors.append("ElevenLabs: ELEVENLABS_API_KEY not set")
@@ -133,6 +141,57 @@ def _transcribe_openai_api(
         provider="openai_whisper_api",
         language_detected=getattr(response, "language", language or "en"),
         duration_seconds=getattr(response, "duration", None),
+    )
+
+
+def _transcribe_groq_api(
+    audio_bytes: bytes,
+    filename: str,
+    language: str | None,
+    api_key: str,
+) -> TranscriptionResult:
+    import os as _os
+    ext = _os.path.splitext(filename)[1].lower()
+    mime_type = _EXTENSION_TO_MIME.get(ext, "audio/mpeg")
+
+    with httpx.Client(timeout=120.0) as client:
+        files = {"file": (filename, audio_bytes, mime_type)}
+        data = {"model": "whisper-large-v3-turbo", "response_format": "verbose_json"}
+        if language:
+            data["language"] = language
+
+        response = client.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files=files,
+            data=data,
+        )
+        if not response.is_success:
+            raise TranscriptionError(
+                code=f"GROQ_HTTP_{response.status_code}",
+                message=f"Groq returned {response.status_code}: {response.text[:300]}",
+            )
+        payload = response.json()
+
+    transcript = (payload.get("text") or "").strip()
+    if not transcript:
+        raise TranscriptionError(
+            code="GROQ_EMPTY_TRANSCRIPT",
+            message="Groq returned no transcript text.",
+        )
+
+    detected_language = payload.get("language") or language or "en"
+    duration = payload.get("duration")
+    try:
+        duration_seconds = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration_seconds = None
+
+    return TranscriptionResult(
+        transcript=transcript,
+        provider="groq_whisper_api",
+        language_detected=detected_language,
+        duration_seconds=duration_seconds,
     )
 
 
