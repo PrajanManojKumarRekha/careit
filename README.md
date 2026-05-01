@@ -103,7 +103,7 @@ The reason `core_logic` is pure Python with no framework dependencies is so we c
 | SOAP approval gate before export | ✅ Implemented |
 | FHIR R4 bundle generation | ✅ Implemented |
 | Internal audit data model (`department_logs`, versioning) | ✅ Schema-level |
-| Real-time speech translation/transcription | 🟡 In progress |
+| Real-time speech translation/transcription | ✅ Deployed (provider fallback) |
 
 ---
 
@@ -137,7 +137,7 @@ We'd rather call these out ourselves than have a judge call them out for us.
 - **Not an EMR.** No longitudinal record. No chart history. We don't replace anything; we feed something.
 - **Not a diagnostic system.** Triage suggests a specialty. SOAP parses a transcript. Neither makes a clinical decision — the doctor does.
 - **No live EMR connectivity.** Epic / Cerner / Athena production push is deferred. We generate and validate the bundle locally.
-- **Speech transcription is in progress** and is *not* on the demo critical path. If we don't finish it, the demo still works end-to-end via pasted transcripts.
+- **Speech transcription is deployed with provider fallback.** Production priority is ElevenLabs first, then Groq fallback, then manual transcript mode if both external providers are unavailable.
 - **Controlled substances are blocked.** The prescription workflow refuses to issue them, regardless of input. This is a deliberate guardrail, not a missing feature.
 
 ---
@@ -174,8 +174,17 @@ SMTP_USERNAME=<smtp_username>
 SMTP_PASSWORD=<smtp_password>
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ALLOW_ONEDRIVE_DOTENV=true
-ELEVENLABS_API_KEY=<your_elevenlabs_api_key>  # optional, used for speech-to-text fallback
+ELEVENLABS_API_KEY=<your_elevenlabs_api_key>  # primary speech-to-text provider
+GROQ_API_KEY=<your_groq_api_key>              # fallback speech-to-text provider
 ```
+
+Transcription provider priority in production:
+
+1. `ELEVENLABS_API_KEY` (primary)
+2. `GROQ_API_KEY` (fallback)
+3. Manual "Paste Transcript" mode (no API dependency)
+
+If you are deploying on cloud hosts (Render/Netlify/Vercel), set these values in platform environment settings (not in committed files) and trigger a redeploy after updating keys.
 
 `NEXT_PUBLIC_API_BASE_URL` is the frontend variable the app reads for auth and API requests. The frontend also accepts `NEXT_PUBLIC_API_URL` as a compatibility fallback, but `NEXT_PUBLIC_API_BASE_URL` should be treated as canonical.
 
