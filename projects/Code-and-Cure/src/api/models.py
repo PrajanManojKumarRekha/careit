@@ -49,9 +49,6 @@ class AuthResponse(BaseModel):
     message: Optional[str] = None
 
 
-class DemoLoginRequest(BaseModel):
-    role: Literal["patient", "doctor"]
-
 # --- Symptom & Triage Models ---
 class SymptomRequest(BaseModel):
     symptoms: str                          # Free-text input
