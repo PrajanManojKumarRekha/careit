@@ -14,8 +14,6 @@ services:
         value: "false"
       - key: ALLOW_ONEDRIVE_DOTENV
         value: "false"
-      - key: ALLOW_DEMO_MODE
-        value: "true"
       - key: JWT_COOKIE_SECURE
         value: "true"
       - key: JWT_COOKIE_SAMESITE
