@@ -875,13 +875,6 @@ def patient_owns_appointment(patient_id: str, appointment_id: str) -> bool:
     return appt.get("patient_id") == patient_id
 
 
-def get_all_appointments() -> list[dict]:
-    """Return every appointment in the system — used as demo fallback for doctor portal."""
-    return _execute_appointment_query(
-        lambda columns: supabase.table("appointments").select(columns).order("scheduled_at", desc=False).limit(200)
-    )
-
-
 def update_appointment_meeting_link(appointment_id: str, meeting_link: str | None) -> dict:
     payload = {"meeting_link": meeting_link}
     try:
@@ -903,57 +896,12 @@ def update_appointment_meeting_link(appointment_id: str, meeting_link: str | Non
 
 
 def get_or_create_doctor_profile(user_id: str) -> dict | None:
-    """Return the doctor profile for user_id, creating a minimal one if it doesn't exist."""
-    existing = get_doctor_by_user_id(user_id)
-    if existing:
-        return existing
-    user_row = supabase.table("users").select("id,full_name").eq("id", user_id).limit(1).execute()
-    user = _first_or_none(user_row.data)
-    if not user:
-        return None
-    res = (
-        supabase.table("doctors")
-        .insert({
-            "user_id": user_id,
-            "full_name": user.get("full_name") or "Doctor",
-            "specialty": "General Practice",
-            "license_no": f"DEMO-{user_id[:8].upper()}",
-            "lat": 40.7128,
-            "lng": -74.0060,
-            "address": "100 Medical Plaza, New York, NY 10001",
-        })
-        .execute()
-    )
-    return _first_or_none(res.data)
+    """Return a pre-provisioned clinician profile without fabricating credentials.
 
-
-def get_or_create_any_doctor() -> dict | None:
-    """Find or auto-create any doctor profile — used as a booking target when no DB doctors exist."""
-    res = supabase.table("doctors").select("id,user_id,full_name,specialty").limit(1).execute()
-    existing = _first_or_none(res.data)
-    if existing:
-        return existing
-    # Try to find a doctor-role user and create a profile for them
-    user_res = (
-        supabase.table("users").select("id,full_name").eq("role", "doctor").limit(1).execute()
-    )
-    user = _first_or_none(user_res.data)
-    if not user:
-        return None
-    insert_res = (
-        supabase.table("doctors")
-        .insert({
-            "user_id": user["id"],
-            "full_name": user.get("full_name") or "Demo Doctor",
-            "specialty": "General Practice",
-            "license_no": f"DEMO-{user['id'][:8].upper()}",
-            "lat": 40.7128,
-            "lng": -74.0060,
-            "address": "100 Medical Plaza, New York, NY 10001",
-        })
-        .execute()
-    )
-    return _first_or_none(insert_res.data)
+    A doctor profile must be created through the clinic's credentialing process;
+    authentication alone must never generate a provider record or license number.
+    """
+    return get_doctor_by_user_id(user_id)
 
 
 def get_doctor_by_user_id(user_id: str) -> dict | None:
