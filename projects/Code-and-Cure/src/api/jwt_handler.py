@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from jose import JWTError, jwt
@@ -17,7 +17,7 @@ def create_token(payload: dict) -> str:
     if not SECRET_KEY:
         raise RuntimeError("JWT_SECRET_KEY must be set to mint legacy application tokens.")
     data = payload.copy()
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     data["exp"] = now + timedelta(hours=TOKEN_EXPIRY_HOURS)
     data["iat"] = now
     data["iss"] = ISSUER
