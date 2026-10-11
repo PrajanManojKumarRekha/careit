@@ -249,6 +249,8 @@ def map_symptom_to_specialty(
             best_rationale = rule.get("rationale", "Recommendation based on your symptoms.")
 
     confidence = min(0.95, 0.55 + (0.08 * best_score)) if best_score > 0 else 0.40
+    if best_score == 0:
+        best_rationale = f"Fallback recommendation: {best_rationale}"
 
     return SpecialtyRecommendation(
         specialty=best_specialty,
