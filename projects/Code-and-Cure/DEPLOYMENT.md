@@ -18,7 +18,6 @@ Set these environment variables in Vercel:
 NEXT_PUBLIC_API_BASE_URL=https://your-render-service.onrender.com
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
 NEXT_PUBLIC_CLERK_TOKEN_TEMPLATE=careit-api
-NEXT_PUBLIC_ENABLE_DEMO_AUTH=true
 ```
 
 If you use a custom frontend domain, add that domain to the backend `CORS_ORIGINS`.
@@ -33,10 +32,8 @@ Required environment variables on Render:
 APP_ENV=production
 ALLOW_DOTENV=false
 ALLOW_ONEDRIVE_DOTENV=false
-ALLOW_DEMO_MODE=true
 JWT_COOKIE_SECURE=true
 JWT_COOKIE_SAMESITE=none
-JWT_SECRET_KEY=<long-random-secret>
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=<supabase-service-key>
 CLERK_SECRET_KEY=sk_live_...
@@ -73,6 +70,15 @@ In `APP_ENV=production`, the API now fails fast if:
 - `JWT_COOKIE_SAMESITE=none` is used without `JWT_COOKIE_SECURE=true`
 - `CORS_ORIGINS` only contains localhost values and no `CORS_ORIGIN_REGEX` is set
 - `ALLOWED_HOSTS` only contains localhost values
-- demo mode is enabled without a real `JWT_SECRET_KEY`
+- Clerk authentication settings are incomplete
 
 This keeps the deployed service from booting with an insecure or incomplete configuration.
+
+## Authentication cutover checklist
+
+1. Apply `scripts/auth_hardening.sql` and review `scripts/production_auth_cutover.sql` in the target Supabase project.
+2. Configure Clerk email/password sign-in and add the production frontend and API domains to Clerk's allowed origins.
+3. Create the `careit-api` JWT template, or leave `CLERK_TOKEN_TEMPLATE` unset to use Clerk's default session token.
+4. Set `public_metadata.role` to `doctor` only through the Clerk Dashboard or a trusted backend provisioning workflow. Public registration creates patient accounts.
+5. Create and credential a matching row in Supabase `doctors` for every Clerk doctor account before granting access.
+6. Verify that the patient can access only their own appointments and that a doctor can access only appointments assigned to their clinician profile.
