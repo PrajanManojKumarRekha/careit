@@ -1,6 +1,6 @@
 """SOAP note PDF rendering helpers."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from src.core_logic.models import SoapNote
 
@@ -10,11 +10,11 @@ def _pdf_escape(value: str) -> str:
 
 
 def _soap_lines(note: SoapNote) -> list[str]:
-    generated_on = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    generated_on = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     return [
-        "ABC HOSPITAL",
-        "Clinical Documentation Unit",
-        "Official SOAP Medical Note",
+        "CareIT SOAP Note",
+        "Clinical Documentation",
+        "Clinician Review Copy",
         f"Generated: {generated_on}",
         "-" * 70,
         "",
@@ -24,7 +24,7 @@ def _soap_lines(note: SoapNote) -> list[str]:
         f"Plan: {note.plan or 'Not provided'}",
         "",
         "-" * 70,
-        "ABC HOSPITAL | Authorized Clinical Document",
+        "CareIT | Clinician-reviewed documentation",
     ]
 
 
