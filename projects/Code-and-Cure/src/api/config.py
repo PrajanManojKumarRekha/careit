@@ -59,7 +59,6 @@ if _initial_allow_dotenv:
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 IS_PRODUCTION = APP_ENV == "production"
 
-ALLOW_DEMO_MODE = _env_flag("ALLOW_DEMO_MODE", default=not IS_PRODUCTION)
 ALLOW_DOTENV = _env_flag("ALLOW_DOTENV", default=not IS_PRODUCTION)
 ALLOW_ONEDRIVE_DOTENV = _env_flag("ALLOW_ONEDRIVE_DOTENV", default=False)
 AUTH_RETURN_TOKEN_IN_BODY = _env_flag("AUTH_RETURN_TOKEN_IN_BODY", default=False)
@@ -75,10 +74,7 @@ ALLOWED_HOSTS = _env_list(
     ["localhost", "127.0.0.1", "*.vercel.app"],
 )
 
-_configured_jwt_secret = os.getenv("JWT_SECRET_KEY", "").strip()
-JWT_SECRET_KEY = _configured_jwt_secret or (
-    "careit-demo-dev-secret" if ALLOW_DEMO_MODE and not IS_PRODUCTION else ""
-)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
 JWT_COOKIE_NAME = os.getenv("JWT_COOKIE_NAME", "careit_access_token")
 JWT_COOKIE_SECURE = _env_flag("JWT_COOKIE_SECURE", default=IS_PRODUCTION)
 JWT_COOKIE_SAMESITE = os.getenv(
@@ -136,9 +132,6 @@ def validate_runtime_config() -> None:
         "CLERK_JWKS_URL": CLERK_JWKS_URL,
         "CLERK_JWT_ISSUER": CLERK_JWT_ISSUER,
     }
-    if ALLOW_DEMO_MODE:
-        required_env["JWT_SECRET_KEY"] = _configured_jwt_secret
-
     for name, value in required_env.items():
         if _looks_placeholder(value):
             production_errors.append(f"{name} must be set to a real production value.")

@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible defect.
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include expected and actual behavior. Do not include patient data or secrets.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. …\n2. …\n3. …"
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Environment
+      placeholder: browser / API version / deployment URL (without credentials)

@@ -2,14 +2,12 @@ import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Depends
 from src.api.models import BookingRequest, RescheduleRequest, AppointmentMeetingLinkUpdate
-from src.api.config import ALLOW_DEMO_MODE
 from src.api.dependencies import require_role, get_current_user
 from src.database.db_client import (
     insert_appointment,
     get_appointment,
-    get_all_appointments,
+    get_appointments_for_doctor,
     get_appointments_for_patient,
-    get_or_create_any_doctor,
     get_or_create_doctor_profile,
     update_appointment_status,
     update_appointment_meeting_link,
@@ -37,17 +35,11 @@ async def create_appointment(request: BookingRequest, current_user: dict = Depen
     patient_id = current_user["user_id"]
 
     if not _is_valid_uuid(request.doctor_id):
-        if not ALLOW_DEMO_MODE:
-            raise HTTPException(
-                status_code=400,
-                detail="Doctor booking is only supported for persisted provider records.",
-            )
-        fallback_doctor = get_or_create_any_doctor()
-        if not fallback_doctor or not fallback_doctor.get("id"):
-            raise HTTPException(status_code=500, detail="No demo doctor profile available for booking.")
-        doctor_id = fallback_doctor["id"]
-    else:
-        doctor_id = request.doctor_id
+        raise HTTPException(
+            status_code=400,
+            detail="Doctor booking is only supported for persisted provider records.",
+        )
+    doctor_id = request.doctor_id
 
     row = insert_appointment(
         patient_id=patient_id,
@@ -79,12 +71,10 @@ async def get_appointments(current_user: dict = Depends(get_current_user)):
         return get_appointments_for_patient(patient_id=user_id)
 
     if role == "doctor":
-        if ALLOW_DEMO_MODE:
-            return get_all_appointments()
         doctor = get_or_create_doctor_profile(user_id)
         if not doctor:
             raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
-        return get_all_appointments()
+        return get_appointments_for_doctor(doctor["id"])
 
     raise HTTPException(
         status_code=403,
@@ -109,7 +99,7 @@ async def get_appointment_detail(appointment_id: str, current_user: dict = Depen
         doctor = get_or_create_doctor_profile(user_id)
         if not doctor:
             raise HTTPException(status_code=403, detail="You can only view your own appointments.")
-        if not ALLOW_DEMO_MODE and not doctor_owns_appointment(doctor["id"], appointment_id):
+        if not doctor_owns_appointment(doctor["id"], appointment_id):
             raise HTTPException(status_code=403, detail="You can only view your own appointments.")
     if role not in {"patient", "doctor"}:
         raise HTTPException(status_code=403, detail="Role is not permitted to access appointments.")
@@ -129,7 +119,7 @@ async def update_meeting_link(
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=403, detail="You can only edit meeting links for your own appointments.")
-    if not ALLOW_DEMO_MODE and not doctor_owns_appointment(doctor["id"], appointment_id):
+    if not doctor_owns_appointment(doctor["id"], appointment_id):
         raise HTTPException(status_code=403, detail="You can only edit meeting links for your own appointments.")
 
     row = update_appointment_meeting_link(appointment_id, body.meeting_link)

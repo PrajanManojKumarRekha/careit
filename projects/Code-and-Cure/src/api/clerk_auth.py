@@ -14,8 +14,6 @@ from src.api.config import (
     CLERK_SECRET_KEY,
 )
 from src.database.db_client import (
-    get_or_create_doctor_profile,
-    get_user_by_clerk_user_id,
     upsert_clerk_user,
 )
 
@@ -128,9 +126,10 @@ def fetch_clerk_user(clerk_user_id: str) -> dict[str, Any]:
 
 def _parse_clerk_profile(user_payload: dict[str, Any]) -> dict[str, str | None]:
     email, is_verified = _pick_primary_email(user_payload)
-    unsafe_metadata = user_payload.get("unsafe_metadata") or {}
     public_metadata = user_payload.get("public_metadata") or {}
-    role = unsafe_metadata.get("role") or public_metadata.get("role")
+    # Never derive authorization from unsafe_metadata: a user can update it
+    # during sign-up. Doctor access must be provisioned in Clerk by an admin.
+    role = public_metadata.get("role")
     first_name = (user_payload.get("first_name") or "").strip()
     last_name = (user_payload.get("last_name") or "").strip()
     full_name = " ".join(part for part in [first_name, last_name] if part).strip()
@@ -138,7 +137,7 @@ def _parse_clerk_profile(user_payload: dict[str, Any]) -> dict[str, str | None]:
     verified_at = datetime.now(timezone.utc).isoformat() if is_verified else None
     return {
         "email": email,
-        "role": role,
+        "role": role if role in {"patient", "doctor"} else "patient",
         "full_name": full_name,
         "email_verified_at": verified_at,
     }
@@ -151,12 +150,6 @@ def sync_clerk_user(clerk_user_id: str) -> dict[str, Any]:
     role = parsed["role"]
     if not email:
         raise HTTPException(status_code=400, detail="Authenticated Clerk user is missing a primary email address.")
-    if role not in {"patient", "doctor"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Account role is missing. Complete sign-up to continue.",
-        )
-
     local_user = upsert_clerk_user(
         clerk_user_id=clerk_user_id,
         email=email,
@@ -167,8 +160,6 @@ def sync_clerk_user(clerk_user_id: str) -> dict[str, Any]:
     if not local_user or not local_user.get("id"):
         raise HTTPException(status_code=500, detail="Failed to synchronize the authenticated user.")
 
-    if role == "doctor":
-        get_or_create_doctor_profile(local_user["id"])
     return local_user
 
 
@@ -178,9 +169,10 @@ def resolve_authenticated_user(token: str) -> dict[str, Any]:
     if not clerk_user_id:
         raise HTTPException(status_code=401, detail="Authentication token is missing the subject.")
 
-    local_user = get_user_by_clerk_user_id(clerk_user_id)
-    if not local_user or local_user.get("role") not in {"patient", "doctor"}:
-        local_user = sync_clerk_user(clerk_user_id)
+    # Synchronize every request so a Clerk role change immediately overrides
+    # any stale local role. This is intentionally conservative for clinical
+    # authorization; add a bounded server-side cache only with revocation tests.
+    local_user = sync_clerk_user(clerk_user_id)
 
     return {
         "user_id": local_user["id"],

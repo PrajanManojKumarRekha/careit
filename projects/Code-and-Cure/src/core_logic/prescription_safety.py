@@ -107,7 +107,7 @@ def check_prescription_safety(request: PrescriptionRequest) -> PrescriptionSafet
     if blocked:
         return PrescriptionSafetyResult(
             is_allowed=False,
-            reason="Not approved by HIPAA face to face required.",
+            reason="Controlled substance prescriptions are not supported by this telehealth workflow.",
             normalized_medication_name=normalized,
         )
     return PrescriptionSafetyResult(

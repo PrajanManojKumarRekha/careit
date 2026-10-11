@@ -44,30 +44,13 @@ def test_me_returns_synced_authenticated_user():
     assert me.json()["email"] == "doctor@example.com"
 
 
-def test_demo_login_returns_demo_token_and_role(monkeypatch):
+def test_demo_login_route_is_not_available():
     app = FastAPI()
     app.include_router(auth_routes.router, prefix="/api/v1/auth")
 
-    monkeypatch.setattr(auth_routes, "ALLOW_DEMO_MODE", True)
-    monkeypatch.setattr(
-        auth_routes,
-        "_ensure_demo_user",
-        lambda role: {
-            "id": f"{role}-user-1",
-            "role": role,
-            "email": f"demo.{role}@careit.local",
-            "full_name": f"Demo {role.title()}",
-        },
-    )
-
     client = TestClient(app)
     response = client.post("/api/v1/auth/demo-login", json={"role": "patient"})
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["role"] == "patient"
-    assert payload["access_token"]
-    assert payload["email"] == "demo.patient@careit.local"
+    assert response.status_code == 404
 
 
 def test_rate_limit_middleware_blocks_after_threshold(monkeypatch):
@@ -172,8 +155,6 @@ def test_external_provider_booking_requires_persisted_doctor(monkeypatch):
         doctor_id="emb:gp01",
         scheduled_at="2026-04-30T10:00:00Z",
     )
-    monkeypatch.setattr(appointments_routes, "ALLOW_DEMO_MODE", False)
-
     with pytest.raises(appointments_routes.HTTPException, match="persisted provider records"):
         asyncio.run(
             appointments_routes.create_appointment(
@@ -183,46 +164,13 @@ def test_external_provider_booking_requires_persisted_doctor(monkeypatch):
         )
 
 
-def test_external_provider_booking_uses_demo_doctor_when_demo_enabled(monkeypatch):
-    request = appointments_routes.BookingRequest(
-        doctor_id="emb:gp01",
-        scheduled_at="2026-04-30T10:00:00Z",
-    )
-
-    monkeypatch.setattr(appointments_routes, "ALLOW_DEMO_MODE", True)
+def test_doctor_portal_lists_only_assigned_appointments(monkeypatch):
     monkeypatch.setattr(
-        appointments_routes,
-        "get_or_create_any_doctor",
-        lambda: {"id": "doctor-demo-1"},
+        appointments_routes, "get_or_create_doctor_profile", lambda user_id: {"id": "doctor-1"}
     )
     monkeypatch.setattr(
-        appointments_routes,
-        "insert_appointment",
-        lambda patient_id, doctor_id, scheduled_at: {
-            "id": "appt-1",
-            "patient_id": patient_id,
-            "doctor_id": doctor_id,
-            "scheduled_at": scheduled_at,
-            "status": "pending",
-        },
-    )
-
-    result = asyncio.run(
-        appointments_routes.create_appointment(
-            request=request,
-            current_user={"user_id": "patient-1", "role": "patient"},
-        )
-    )
-
-    assert result["booking"]["doctor_id"] == "doctor-demo-1"
-
-
-def test_doctor_portal_lists_all_appointments_in_demo_mode(monkeypatch):
-    monkeypatch.setattr(appointments_routes, "ALLOW_DEMO_MODE", True)
-    monkeypatch.setattr(
-        appointments_routes,
-        "get_all_appointments",
-        lambda: [{"id": "appt-1"}, {"id": "appt-2"}, {"id": "appt-3"}],
+        appointments_routes, "get_appointments_for_doctor",
+        lambda doctor_id: [{"id": "appt-1", "doctor_id": doctor_id}],
     )
 
     result = asyncio.run(
@@ -231,11 +179,10 @@ def test_doctor_portal_lists_all_appointments_in_demo_mode(monkeypatch):
         )
     )
 
-    assert len(result) == 3
+    assert result == [{"id": "appt-1", "doctor_id": "doctor-1"}]
 
 
 def test_intake_route_denies_cross_doctor_access(monkeypatch):
-    monkeypatch.setattr(intake_routes, "ALLOW_DEMO_MODE", False)
     monkeypatch.setattr(intake_routes, "get_or_create_doctor_profile", lambda user_id: {"id": "doctor-1"})
     monkeypatch.setattr(intake_routes, "doctor_owns_appointment", lambda doctor_id, appointment_id: False)
 
@@ -248,8 +195,7 @@ def test_intake_route_denies_cross_doctor_access(monkeypatch):
         )
 
 
-def test_fhir_export_denies_cross_doctor_access_outside_demo(monkeypatch):
-    monkeypatch.setattr(fhir_routes, "ALLOW_DEMO_MODE", False)
+def test_fhir_export_denies_cross_doctor_access(monkeypatch):
     monkeypatch.setattr(fhir_routes, "get_or_create_doctor_profile", lambda user_id: {"id": "doctor-1"})
     monkeypatch.setattr(fhir_routes, "doctor_owns_appointment", lambda doctor_id, appointment_id: False)
 
@@ -260,42 +206,3 @@ def test_fhir_export_denies_cross_doctor_access_outside_demo(monkeypatch):
                 current_user={"user_id": "doctor-user-1", "role": "doctor"},
             )
         )
-
-
-def test_fhir_export_allows_cross_doctor_access_in_demo_mode(monkeypatch):
-    monkeypatch.setattr(fhir_routes, "ALLOW_DEMO_MODE", True)
-    monkeypatch.setattr(fhir_routes, "get_or_create_doctor_profile", lambda user_id: {"id": "doctor-1"})
-    monkeypatch.setattr(fhir_routes, "doctor_owns_appointment", lambda doctor_id, appointment_id: False)
-    monkeypatch.setattr(
-        fhir_routes,
-        "get_soap_note_by_appointment",
-        lambda appointment_id: {
-            "id": "soap-1",
-            "doctor_id": "doctor-demo-1",
-            "subjective": "Subjective",
-            "objective": "Objective",
-            "assessment": "Assessment",
-            "plan": "Plan",
-            "approved": True,
-        },
-    )
-    monkeypatch.setattr(
-        fhir_routes,
-        "get_appointment",
-        lambda appointment_id: {"id": appointment_id, "patient_id": "patient-1"},
-    )
-    monkeypatch.setattr(
-        fhir_routes,
-        "build_fhir_bundle",
-        lambda **kwargs: type("Result", (), {"bundle": {"resourceType": "Bundle", "entry": []}})(),
-    )
-    monkeypatch.setattr(fhir_routes, "insert_fhir_record", lambda **kwargs: None)
-
-    result = asyncio.run(
-        fhir_routes.export_to_emr(
-            appointment_id="appt-123",
-            current_user={"user_id": "doctor-user-1", "role": "doctor"},
-        )
-    )
-
-    assert result.status == "success"

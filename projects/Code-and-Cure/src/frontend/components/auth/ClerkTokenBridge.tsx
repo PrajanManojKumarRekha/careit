@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect } from "react";
 
-import { setAccessTokenProvider, setStoredToken } from "@/lib/api";
+import { clearStoredToken, setAccessTokenProvider, setStoredToken } from "@/lib/api";
 
 export default function ClerkTokenBridge() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
@@ -12,6 +12,7 @@ export default function ClerkTokenBridge() {
     if (!isLoaded) return;
     if (!isSignedIn) {
       setAccessTokenProvider(null);
+      clearStoredToken();
       return () => setAccessTokenProvider(null);
     }
 

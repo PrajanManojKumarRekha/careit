@@ -1,308 +1,206 @@
-# CareIT (CureIT)
+# CareIT
 
-Telehealth workflow + FHIR interoperability bridge for independent practitioners. Built over the CareDevi AI Innovation Hackathon 2026 weekend.
+CareIT is a telehealth workflow and FHIR R4 interoperability prototype for independent practitioners. It takes a patient from symptom intake and specialist discovery through booking, clinician-reviewed SOAP documentation, and an exportable FHIR bundle.
 
-We want to be upfront about what this is: CareIT is **not** an EMR, and it is **not** a diagnostic tool. It is the connective tissue between a patient describing symptoms in plain English and a clean, FHIR-R4 bundle landing on the other side of a doctor's approval — with as little manual work in between as possible.
+This repository is the operational source of truth for the project. The documented local and self-hosted paths below are deliberately independent of a particular hosted demo: if a Vercel or Render deployment disappears, a new developer can clone this repository, configure replacement services, and run or redeploy CareIT.
 
----
+> **Clinical boundary:** CareIT is not an EMR and does not diagnose, prescribe autonomously, or provide production EMR connectivity. Clinicians review and approve SOAP notes before export; controlled-substance prescriptions are blocked.
 
-## The Problem
+## What is included
 
-Independent practitioners and small clinics live in a fragmented stack. Scheduling lives in one tool, transcription in another, charting somewhere else, and the EMR rarely talks cleanly to any of them. Three things fall out of that:
+- Patient symptom intake with specialty suggestions
+- Practitioner discovery using OpenStreetMap, with embedded/seeded fallbacks
+- Patient booking and clinician appointment workflows
+- Transcript-to-SOAP drafting with clinician approval
+- Deterministic FHIR R4 bundle generation (`Consent`, `Composition`, and optional `MedicationRequest`)
+- Clerk authentication with Supabase-backed user and clinical-workflow records
 
-1. Patients struggle to figure out *which* specialist they actually need.
-2. Doctors burn most of their post-visit time turning a conversation into a chart note.
-3. The handoff to the downstream EMR — the part that's supposed to be standardized — is still mostly manual, mostly inconsistent, and mostly a source of error.
+## Repository map
 
-We picked this because every member of the team has either worked in or alongside a small clinic and watched this happen. The ambition for the weekend was narrow on purpose: pick the seam where things break the most, and make that seam standards-compliant.
+The deployable application lives under `projects/Code-and-Cure`.
 
----
-
-## What has been Built
-
-A workflow that runs end-to-end, from a patient typing symptoms to a FHIR R4 bundle that an EMR could ingest. There are five moving pieces:
-
-1. **Symptom triage.** Patient types free text. The system suggests a specialty.
-2. **Doctor discovery + booking.** We pull live practitioner data from OpenStreetMap (Overpass + Nominatim) so we don't depend on a paid API. If the live lookup fails, we fall back to seeded doctors in Supabase.
-3. **Transcript → SOAP.** The doctor uploads or pastes a transcript. The system parses it into a structured SOAP note.
-4. **Approval gate.** Nothing leaves the system until the doctor explicitly approves the SOAP. This is enforced in code, not in policy.
-5. **FHIR R4 bundle generation.** Approved SOAPs are serialized into a deterministic bundle (`Consent`, `Composition`, optional `MedicationRequest`).
-
-We deferred live Epic / Cerner / Athena production endpoint integration for the hackathon. Building that adapter without real sandbox credentials would be theatre, so instead we made sure the FHIR output is correct and demoable through a synthetic submission flow.
-
----
-
-## How It Works (Step by Step)
-
-This is the actual flow we demo. Following these steps in order is the fastest way to understand the system.
-
-### Step 1 — Patient signs in and describes symptoms
-
-The patient logs in and lands on a single text box. They describe what's going on in their own words — no dropdowns, no checkboxes. We pass the text to the triage layer in `src/core_logic`, which returns a recommended specialty and a one-line rationale.
-
-The patient sees the recommendation and can accept it or override it. We deliberately did not auto-route — humans confirm.
-
-### Step 2 — Doctor discovery
-
-Once a specialty is selected, the discovery layer queries OpenStreetMap via Overpass for practitioners tagged with the relevant specialty, geocoded through Nominatim. Results come back, get normalized, and render as a bookable list.
-
-If Overpass is unreachable (it does go down occasionally — we hit this on Saturday afternoon), we silently fall back to the seeded doctor list in Supabase. The user doesn't see an error; they just see fewer results.
-
-### Step 3 — Booking
-
-The patient picks a slot. The booking record gets written to Supabase with patient ID, doctor ID, time, and status. Nothing fancy here — just CRUD with proper constraints. This was the easiest pillar to build and the one we touched the least over the weekend.
-
-### Step 4 — Doctor signs in and runs the encounter
-
-The doctor logs in and sees their schedule. They open a booked appointment, run the visit (in real life — for the demo, we paste a transcript), and trigger SOAP generation.
-
-The transcript is passed through the SOAP parser in `src/core_logic`. The output is a structured note with the four standard sections: Subjective, Objective, Assessment, Plan.
-
-### Step 5 — Doctor reviews and approves the SOAP
-
-This is the gate. The doctor sees the parsed SOAP, edits anything the model got wrong (or anything they want to change for any reason), and clicks approve. The note's state moves from `draft` to `approved`.
-
-We enforce the gate at the API layer, not the UI layer. The export endpoint refuses any SOAP that isn't `approved`. We tested this by trying to call it directly — it rejects.
-
-### Step 6 — FHIR bundle generation
-
-Once approved, the doctor can export. The export endpoint takes the approved SOAP and produces a FHIR R4 JSON bundle:
-
-- `Consent` — patient consent record for the encounter
-- `Composition` — the SOAP note itself, structured
-- `MedicationRequest` — only if a prescription was part of the plan
-
-The serializer is deterministic — same input, byte-identical output. We did this on purpose so the bundle is testable and reviewable. Controlled substances are blocked at this layer regardless of what the SOAP says.
-
-### Step 7 — Handoff (synthetic)
-
-For the hackathon, the bundle is written to disk and viewable in the UI. In production, this is where the EMR vendor adapter would push it.
-
----
+```text
+.
+├── README.md
+├── requirements.txt                     # Root Python dependency snapshot
+└── projects/Code-and-Cure/
+    ├── src/api/                         # FastAPI gateway
+    ├── src/core_logic/                  # Testable Python domain logic
+    ├── src/database/                    # Supabase schema and access helpers
+    ├── src/frontend/                    # Next.js / TypeScript interface
+    ├── scripts/                         # Database migrations and test runner
+    ├── .env.example                     # API environment template
+    ├── DEPLOYMENT.md                    # Render / Vercel configuration reference
+    ├── Dockerfile.api                   # API production image
+    └── render.yaml                      # Render Blueprint
+```
 
 ## Architecture
 
-We organized the codebase into four pillars under `src/`. Each pillar has one job and one owner during the weekend.
-
-| Pillar | Path | What lives here |
+| Component | Technology | Responsibility |
 |---|---|---|
-| Frontend | `src/frontend` | Next.js 14 / React 18 / TypeScript / Tailwind UI |
-| API | `src/api` | FastAPI gateway, Pydantic schemas, route orchestration |
-| Core Logic | `src/core_logic` | Pure Python — triage, SOAP parsing, FHIR serialization |
-| Database | `src/database` | Supabase schema, query wrappers, audit tables |
+| Web app | Next.js 14, React, TypeScript, Tailwind | Patient and clinician experience |
+| API | FastAPI, Pydantic | Authentication, workflow orchestration, HTTP endpoints |
+| Domain logic | Python | Triage, SOAP parsing, FHIR serialization, safety rules |
+| Persistence | Supabase / PostgreSQL | Users, appointments, notes, audit data |
+| Identity | Clerk | Production identity, session management, and role provisioning |
 
-The reason `core_logic` is pure Python with no framework dependencies is so we can unit-test it without spinning up a server. That paid off — most of our weekend tests live there.
+The API exposes `/healthz` for health checks and versioned endpoints under `/api/v1`.
 
-### Where each feature stands
+## Fast local setup
 
-| Feature | Status |
-|---|---|
-| Symptom triage and routing | ✅ Implemented |
-| Appointment booking and retrieval | ✅ Implemented |
-| Transcript → SOAP parsing | ✅ Implemented |
-| SOAP approval gate before export | ✅ Implemented |
-| FHIR R4 bundle generation | ✅ Implemented |
-| Internal audit data model (`department_logs`, versioning) | ✅ Schema-level |
-| Real-time speech translation/transcription | ✅ Deployed (provider fallback) |
+### Prerequisites
 
----
+- Git
+- Python 3.12+
+- Node.js 20+ and npm
+- A Supabase project for persistence (or an already-provisioned project)
+- Docker Desktop only if you are building container images
 
-## Tech Stack
+### 1. Clone and enter the application
 
-- **Frontend:** Next.js 14, React 18, TypeScript, Tailwind CSS
-- **API:** FastAPI, Pydantic
-- **Core Logic:** Python 3.12+ (`dataclasses`, deterministic processing)
-- **Database:** Supabase (PostgreSQL)
-- **Interoperability:** FHIR R4 JSON Bundle
-- **Authentication** Clerk
-
-
----
-
-## Data Sources
-
-| Source | What it provides | Notes |
-|---|---|---|
-| OpenStreetMap (Overpass + Nominatim) | Live practitioner lookup and geocoding | No paid API key. Falls back to seeded data when unavailable. |
-| Supabase (PostgreSQL) | Patient records, bookings, SOAP notes, audit logs | All persistent state. Includes `department_logs` for versioning. |
-| User-supplied transcripts | Input to SOAP parsing | Not retained beyond the approval workflow. |
-| **No external clinical datasets** | — | Nothing was trained on or bundled with the project. |
-
----
-
-## Limitations
-
-We'd rather call these out ourselves than have a judge call them out for us.
-
-- **Not an EMR.** No longitudinal record. No chart history. We don't replace anything; we feed something.
-- **Not a diagnostic system.** Triage suggests a specialty. SOAP parses a transcript. Neither makes a clinical decision — the doctor does.
-- **No live EMR connectivity.** Epic / Cerner / Athena production push is deferred. We generate and validate the bundle locally.
-- **Speech transcription is deployed with provider fallback.** Production priority is ElevenLabs first, then Groq fallback, then manual transcript mode if both external providers are unavailable.
-- **Controlled substances are blocked.** The prescription workflow refuses to issue them, regardless of input. This is a deliberate guardrail, not a missing feature.
-
----
-
-## Setup Instructions
-
-These are the exact steps we used. They assume Windows + PowerShell because that's the dev box, but they translate directly to macOS/Linux — just swap the path style.
-
-### Step 1 — Clone the repo
-
-```powershell
-git clone https://github.com/<your-fork>/hackathon-2026-projects.git
-cd "C:\Users\praja\OneDrive\Projects\CareIT\hackathon-2026-projects\projects\Code-and-Cure"
+```bash
+git clone https://github.com/PrajanManojKumarRekha/CareIT.git
+cd CareIT/projects/Code-and-Cure
 ```
 
-### Step 2 — Install backend dependencies
+### 2. Configure the API
 
-```powershell
-python -m pip install -r src/api/requirements.txt
+Create the local API configuration from the committed template. Do not commit the resulting `.env` file.
+
+```bash
+cp .env.example .env
 ```
 
-### Step 3 — Set environment variables
+For local development, set real values for `SUPABASE_URL`, `SUPABASE_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWKS_URL`, and `CLERK_JWT_ISSUER`. Keep `APP_ENV=development`. Clerk owns password and email-verification flows; the API mirrors authenticated users into Supabase.
 
-Create a `.env` file at the project root (or set these as system env vars):
+If the checkout is stored in OneDrive, retain `ALLOW_ONEDRIVE_DOTENV=true` locally. In production, set `ALLOW_DOTENV=false` and `ALLOW_ONEDRIVE_DOTENV=false`, then configure secrets in the hosting platform rather than in a synced `.env` file.
 
-```env
-SUPABASE_URL=<your_supabase_url>
-SUPABASE_KEY=<your_supabase_key>
-JWT_SECRET_KEY=<your_jwt_secret>
-AUTH_EMAIL_FROM=<no-reply@example.com>
-SMTP_HOST=<smtp_host>
-SMTP_PORT=587
-SMTP_USERNAME=<smtp_username>
-SMTP_PASSWORD=<smtp_password>
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-ALLOW_ONEDRIVE_DOTENV=true
-ELEVENLABS_API_KEY=<your_elevenlabs_api_key>  # primary speech-to-text provider
-GROQ_API_KEY=<your_groq_api_key>              # fallback speech-to-text provider
+Before using an existing Supabase project with the hardened authentication flow, apply the checked-in migration:
+
+```bash
+# Run this in the Supabase SQL editor or with your approved PostgreSQL migration workflow.
+scripts/auth_hardening.sql
 ```
 
-Transcription provider priority in production:
+### 3. Install and start the API
 
-1. `ELEVENLABS_API_KEY` (primary)
-2. `GROQ_API_KEY` (fallback)
-3. Manual "Paste Transcript" mode (no API dependency)
-
-If you are deploying on cloud hosts (Render/Netlify/Vercel), set these values in platform environment settings (not in committed files) and trigger a redeploy after updating keys.
-
-`NEXT_PUBLIC_API_BASE_URL` is the frontend variable the app reads for auth and API requests. The frontend also accepts `NEXT_PUBLIC_API_URL` as a compatibility fallback, but `NEXT_PUBLIC_API_BASE_URL` should be treated as canonical.
-
-If you are running locally from a OneDrive-synced workspace, set `ALLOW_ONEDRIVE_DOTENV=true` or move secrets to machine-level environment variables. Otherwise the backend intentionally ignores the local `.env` file for safety.
-
-For production, do not keep `.env` files inside a OneDrive-synced workspace. Use machine or platform environment variables instead.
-
-Before starting the API against an existing Supabase project, apply [scripts/auth_hardening.sql](/abs/path/C:/Users/praja/OneDrive/Projects/CareIT/hackathon-2026-projects/projects/Code-and-Cure/scripts/auth_hardening.sql). It adds email-verification, login-lockout, and OTP challenge tables/columns used by the hardened auth flow.
-
-> Doctor discovery does **not** need an API key — it uses public OpenStreetMap endpoints. If those are unreachable, the app falls back to the seeded doctors in Supabase automatically.
-
-### Step 4 — Run the backend
-
-```powershell
-python -m uvicorn src.api.main:app --reload
+```bash
+python3 -m venv .venv
+source .venv/bin/activate                 # Windows PowerShell: .venv\\Scripts\\Activate.ps1
+python3 -m pip install --upgrade pip
+python3 -m pip install -r src/api/requirements.txt
+python3 -m uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Backend will be at `http://127.0.0.1:8000`.
+Confirm the service is live:
 
-> We use `python -m uvicorn ...` instead of just `uvicorn ...` to dodge PATH issues on Windows. Lost about 20 minutes to this on Saturday morning.
+```bash
+curl http://127.0.0.1:8000/healthz
+```
 
-### Step 5 — Install frontend dependencies
+Expected response: `{"status":"ok"}`.
+
+### 4. Configure and start the frontend
 
 In a second terminal:
 
-```powershell
-cd "C:\Users\praja\OneDrive\Projects\CareIT\hackathon-2026-projects\projects\Code-and-Cure\src\frontend"
-npm install
-```
-
-### Step 6 — Run the frontend
-
-```powershell
+```bash
+cd CareIT/projects/Code-and-Cure/src/frontend
+cp .env.example .env.local
+npm ci
 npm run dev
 ```
 
-Frontend will be at `http://localhost:3000`. Open it in a browser. The frontend talks to the backend on port 8000.
+Set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` and a real `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `src/frontend/.env.local`.
 
-### Step 7 — Verify it actually works
+Open [http://localhost:3000](http://localhost:3000). The frontend expects the API to be available on port 8000.
 
-You should be able to:
+## End-to-end validation runbook
 
-1. Sign in as a patient
-2. Verify the email code sent during registration
-3. Complete sign-in with the emailed one-time code
-4. Submit symptoms and get a specialty back
-5. See doctors and book a slot
-6. Sign out, sign in as a doctor
-7. Generate a SOAP from a pasted transcript
-8. Approve the SOAP
-9. Export a FHIR bundle
+Use two real Clerk accounts: a self-registered patient and a clinic-provisioned doctor with a verified clinician profile in Supabase.
 
-If any step fails, run the verification pipeline below before assuming it's a code bug.
+1. Start the API and frontend using the local setup above.
+2. Confirm `GET /healthz` returns `{"status":"ok"}`.
+3. Sign in as the patient and submit a symptom description.
+4. Accept or change the suggested specialty, select a practitioner, and book a slot.
+5. Sign in as the assigned doctor and open the appointment.
+6. Use **Paste Transcript** rather than live transcription, generate a SOAP draft, review it, and approve it.
+7. Export the resulting FHIR bundle and show the `Consent` and `Composition` resources.
 
----
+Resilience built into the workflow:
 
-## Verification Pipeline
+- If speech providers are unavailable, use manual transcript input.
+- If public OpenStreetMap lookups are unavailable, the application uses its embedded/seeded practitioner fallback.
+- Clerk email delivery and verification must be configured in the Clerk dashboard before production validation.
 
-We run these in order before merging any branch. They catch about 90% of problems before they hit `main`.
+Never present the synthetic FHIR acknowledgement as a live EMR submission.
 
-### A. Core logic tests
+## Quality checks
 
-```powershell
-cd "C:\Users\praja\OneDrive\Projects\CareIT\hackathon-2026-projects\projects\Code-and-Cure"
-python -m pytest src/core_logic/test_logic.py
-```
+Run these from `projects/Code-and-Cure` before a deployment:
 
-If this fails, the bug is in pure logic — triage, SOAP parsing, or FHIR serialization. Fastest tests in the project.
+```bash
+# Backend and core logic checks
+python3 -m pytest src/core_logic/test_logic.py src/core_logic/test_stream_session.py src/api/test_security_integration.py
 
-### B. API import sanity
-
-```powershell
-python -c "import src.api.main; print('api_import_ok')"
-```
-
-Catches silly things like a bad import or a circular dependency before you even start the server. Takes a second.
-
-### C. Frontend production build
-
-```powershell
-cd "C:\Users\praja\OneDrive\Projects\CareIT\hackathon-2026-projects\projects\Code-and-Cure\src\frontend"
+# Frontend production build
+cd src/frontend
 npm run build
 ```
 
-`npm run dev` is forgiving. `npm run build` is not. If this fails, the build is broken and nothing is shippable.
+On macOS/Linux, the repository also provides `scripts/run_tests.sh` to run both steps.
 
-### D. End-to-end smoke
+## Hosting and recovery
 
-Walk through the seven steps in the setup section above. If you can complete the loop, the system is working.
+The application can be hosted as two services:
 
----
+| Service | Current hosted target | Source directory |
+|---|---|---|
+| Frontend | Vercel | `projects/Code-and-Cure/src/frontend` |
+| API | Render | `projects/Code-and-Cure` |
 
-## Demo
+Detailed platform configuration lives in [projects/Code-and-Cure/DEPLOYMENT.md](projects/Code-and-Cure/DEPLOYMENT.md), and the API has a Render Blueprint at [projects/Code-and-Cure/render.yaml](projects/Code-and-Cure/render.yaml). Treat these files and the environment templates as the recovery checklist—not the state of a particular deployment.
 
-Demo video and screenshots live in `demo/`. We'll be presenting live during the Sunday demo session.
+### Recreate a hosted environment
 
----
+1. Provision a Supabase project and apply the database schema/migrations used by the application.
+2. Provision a Clerk application and create the `careit-api` token template if Clerk authentication is required.
+3. Deploy the API from `projects/Code-and-Cure` using `render.yaml`, or run `Dockerfile.api` on any container host.
+4. Set the production API environment variables from `.env.example` and `DEPLOYMENT.md`. Use real secrets; do not copy placeholder values.
+5. Deploy the frontend from `src/frontend` and set `NEXT_PUBLIC_API_BASE_URL` to the public API URL **at build time**.
+6. Set API `CORS_ORIGINS` and `ALLOWED_HOSTS` to the deployed frontend and API hostnames.
+7. Visit `/healthz`, open the frontend, and complete the end-to-end validation runbook before sharing the URL.
 
-## Project Guardrails (non-negotiable)
+Production startup validates required secrets, CORS, cookie security, and allowed hosts. That failure is intentional: correct the configuration rather than bypassing the validation.
 
-- We don't describe CareIT as an EMR. Anywhere.
-- We don't claim production EMR connectivity unless an adapter is implemented and credentials are real.
-- Only **approved** SOAPs are eligible for FHIR export. The check is in the API layer.
-- Controlled-substance prescriptions are blocked in the prescription workflow.
+### Self-hosting notes
 
----
+`Dockerfile.api` builds the FastAPI service. For the frontend Docker image, build with `NEXT_OUTPUT_MODE=standalone`, because the frontend Dockerfile copies Next.js standalone output:
 
-## Repository Layout
-
+```bash
+cd projects/Code-and-Cure/src/frontend
+NEXT_OUTPUT_MODE=standalone docker build -t careit-frontend .
 ```
-projects/Code-and-Cure/
-├── README.md            # This file
-├── responsible-ai.md    # Bias, failure cases, data-source posture (hackathon requirement)
-├── AI.md                # Working notes on AI components (temporary)
-├── src/
-│   ├── frontend/        # Next.js / React UI
-│   ├── api/             # FastAPI gateway
-│   ├── core_logic/      # Deterministic Python logic
-│   └── database/        # Supabase schema and wrappers
-└── demo/                # Demo video / screenshots
-```
+
+Keep the API, frontend, database, and identity configuration in separate managed services. Back up Supabase data and record the deployed environment-variable names in your password manager or secret-management system; never place production secrets in Git or OneDrive.
+
+## Required configuration overview
+
+| Area | Key variables |
+|---|---|
+| API/runtime | `APP_ENV`, `JWT_SECRET_KEY`, `CORS_ORIGINS`, `ALLOWED_HOSTS` |
+| Database | `SUPABASE_URL`, `SUPABASE_KEY` |
+| Clerk | `CLERK_SECRET_KEY`, `CLERK_JWKS_URL`, `CLERK_JWT_ISSUER`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
+| Frontend/API connection | `NEXT_PUBLIC_API_BASE_URL` |
+| Email | `AUTH_EMAIL_DELIVERY_MODE`, `AUTH_EMAIL_FROM`, SMTP variables |
+| Transcription (optional) | `ELEVENLABS_API_KEY`, `GROQ_API_KEY` |
+
+Refer to the two `.env.example` files for the complete supported set and safe local defaults.
+
+## Guardrails
+
+- Keep patient data and all secrets out of version control.
+- Require clinician review before any FHIR export.
+- Do not claim the synthetic FHIR handoff is a live vendor integration.
+- Validate a replacement host with the runbook before retiring an existing deployment.

@@ -1,0 +1,25 @@
+name: Backend tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: projects/Code-and-Cure
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: projects/Code-and-Cure/src/api/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r src/api/requirements.txt
+      - run: python -m pytest src/core_logic/test_logic.py src/core_logic/test_stream_session.py src/api/test_security_integration.py src/api/test_runtime_config.py
