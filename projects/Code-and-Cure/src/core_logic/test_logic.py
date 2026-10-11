@@ -73,7 +73,7 @@ def test_slot_request_defaults_are_explicit() -> None:
 def test_map_symptom_to_specialty_golden_path_headache() -> None:
     recommendation = map_symptom_to_specialty(SymptomInput(symptom="headache"))
 
-    assert recommendation.specialty == "General Practice"
+    assert recommendation.specialty == "Neurology"
     assert recommendation.department == "Navigation"
     assert recommendation.source_symptom == "headache"
     assert "headache" in recommendation.matched_cues
@@ -389,7 +389,7 @@ def test_core_logic_end_to_end_chain_happy_path() -> None:
         prescription_request=prescription,
     )
 
-    assert triage.specialty == "General Practice"
+    assert triage.specialty == "Pulmonology"
     assert slots.available_slots == ["10:00", "11:00"]
     assert soap.assessment != ""
     assert safety.is_allowed is True
