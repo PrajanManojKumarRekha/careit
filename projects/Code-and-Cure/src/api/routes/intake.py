@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Depends
-from src.api.config import ALLOW_DEMO_MODE
 from src.api.models import IntakeForm
 from src.api.dependencies import require_role, get_current_user
 from src.database.db_client import (
@@ -46,14 +45,13 @@ async def submit_intake_form(form: IntakeForm, current_user: dict = Depends(get_
 async def get_intake_form(appointment_id: str, current_user: dict = Depends(get_current_user)):
     """
     Doctor-only route. Fetches the read-only intake form for a specific appointment.
-    Ownership is intentionally relaxed so all doctor-role users can read patient
-    intake data — this matches the demo portal where all appointments are visible.
+    Access is limited to the clinician assigned to the appointment.
     """
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
 
-    if not doctor_owns_appointment(doctor["id"], appointment_id) and not ALLOW_DEMO_MODE:
+    if not doctor_owns_appointment(doctor["id"], appointment_id):
         raise HTTPException(status_code=403, detail="You can only view intake forms for your own appointments.")
 
     record = get_intake_by_appointment(appointment_id)
