@@ -27,7 +27,6 @@ from src.api.models import (
     TranscribeUploadResponse,
 )
 from src.api.dependencies import require_role, get_current_user
-from src.api.config import ALLOW_DEMO_MODE
 from src.api.config import (
     TRANSCRIPTION_MAX_CONCURRENCY,
     TRANSCRIPTION_QUEUE_TIMEOUT_SECONDS,
@@ -61,13 +60,12 @@ from src.database.db_client import (
 router = APIRouter()
 def _require_doctor_appointment_access(current_user: dict, appointment_id: str) -> dict:
     """Ensure caller is a doctor. Auto-creates profile if needed.
-    Ownership check is relaxed for demo: all doctor-role users can access all appointments
-    (matching the dashboard where all appointments are visible to any logged-in doctor).
+    Access is limited to the clinician assigned to the appointment.
     """
     doctor = get_or_create_doctor_profile(current_user["user_id"])
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found for current user.")
-    if not doctor_owns_appointment(doctor["id"], appointment_id) and not ALLOW_DEMO_MODE:
+    if not doctor_owns_appointment(doctor["id"], appointment_id):
         raise HTTPException(status_code=403, detail="You can only access SOAP records for your own appointments.")
     return doctor
 
